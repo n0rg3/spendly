@@ -8,7 +8,33 @@ generator client {
 }
 
 model User {
-  id    String @id @default(cuid())
-  email String @unique
-  name  String?
+  id        String     @id @default(cuid())
+  telegramId String    @unique
+  createdAt DateTime   @default(now())
+
+  categories Category[]
+  expenses   Expense[]
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String
+  color     String?
+  userId    String
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expenses  Expense[]
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  amount      Float
+  description String?
+  createdAt   DateTime @default(now())
+
+  userId      String
+  categoryId  String?
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 }
