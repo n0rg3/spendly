@@ -659,16 +659,14 @@ function App() {
                     className="calc-amount-input"
                     value={currentAmount}
                     placeholder="Сумма, ₽"
-                    readOnly={calcKeyboardOpen && calcKeyboardTarget === "edit"}
+                    readOnly
+                    inputMode="none"
                     onFocus={() => {
                       if (calcKeyboardTarget !== "edit") {
                         setAmountExpression(String(editingExpense.amount));
                         setCalcKeyboardTarget("edit");
                       }
                       setCalcKeyboardOpen(true);
-                    }}
-                    onChange={(e) => {
-                      if (calcKeyboardTarget === "edit") setAmountExpression(e.target.value);
                     }}
                   />
                   <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" onFocus={() => setCalcKeyboardOpen(false)} />
@@ -864,16 +862,14 @@ function App() {
                   className="calc-amount-input"
                   value={calcKeyboardTarget === "add" ? amountExpression : ""}
                   placeholder="Сумма, ₽"
-                  readOnly={calcKeyboardOpen && calcKeyboardTarget === "add"}
+                  readOnly
+                  inputMode="none"
                   onFocus={() => {
                     if (calcKeyboardTarget !== "add") {
                       setAmountExpression("");
                       setCalcKeyboardTarget("add");
                     }
                     setCalcKeyboardOpen(true);
-                  }}
-                  onChange={(e) => {
-                    if (calcKeyboardTarget === "add") setAmountExpression(e.target.value);
                   }}
                 />
                 <input name="description" maxLength={300} placeholder="Что купили?" onFocus={() => setCalcKeyboardOpen(false)} />
