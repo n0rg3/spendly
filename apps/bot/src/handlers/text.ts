@@ -3,79 +3,79 @@ import { bot } from "../bot.js";
 import { db } from "@sp3ndly/database";
 import { getOrCreateUser } from "../utils/getOrCreateUser.js";
 
-// Хранилище временных данных: telegramId -> { amount, description }
-const pendingExpenses = new Map<string, { amount: number; description: string | undefined }>();
+// Хранилище временных данных: telegramId -> { categoryName, amount, description }
+export const pendingExpenses = new Map<
+  string, 
+  { categoryName: string; amount: number; description?: string }
+>();
 
 bot.on("message:text", async (ctx) => {
-  const fromId = ctx.from?.id;
-  if (!fromId) return;
+  try {
+    const fromId = ctx.from?.id;
+    if (!fromId) return;
 
-  const text = ctx.message.text.trim();
-  const telegramId = String(fromId);
+    const text = ctx.message.text.trim();
+    const telegramId = String(fromId);
 
-  // Пропускаем команды (начинаются с /)
-  if (text.startsWith("/")) return;
+    // Пропускаем команды
+    if (text.startsWith("/")) return;
 
-  // Проверяем, не ждёт ли пользователь выбора категории
-  const pending = pendingExpenses.get(telegramId);
-  if (pending) {
-    // Пользователь выбрал категорию из инлайн-кнопок — обрабатывается в categories.ts
-    return;
+    // Парсим: "категория описание сумма" или "категория сумма"
+    const parts = text.split(/\s+/);
+    if (parts.length < 2) return; // Пропускаем невалидный ввод
+
+    // Последняя часть — сумма
+    const amountStr = parts[parts.length - 1]!.replace(",", ".");
+    const amount = Number(amountStr);
+    if (isNaN(amount) || amount <= 0) return;
+
+    // Первая часть — категория
+    const categoryName = parts[0]!;
+
+    // Всё между категорией и суммой — описание
+    const description = parts.length > 2
+      ? parts.slice(1, -1).join(" ")
+      : undefined;
+
+    const user = await getOrCreateUser(telegramId);
+
+    // Поиск категории БЕЗ учета регистра (mode: "insensitive")
+    const category = await db.category.findFirst({
+      where: {
+        name: { equals: categoryName, mode: "insensitive" },
+        userId: user.id,
+      },
+    });
+
+    if (!category) {
+      // Сохраняем временные данные в Map, чтобы не превысить 64 байта в callback_data кнопки!
+      pendingExpenses.set(telegramId, { categoryName, amount, description });
+
+      const createKeyboard = new InlineKeyboard()
+        .text(`✅ Создать "${categoryName}"`, "confirm_create_category")
+        .text("❌ Отмена", "cancel_create_category");
+
+      return await ctx.reply(
+        `Категория "${categoryName}" не найдена. Создать?`,
+        { reply_markup: createKeyboard },
+      );
+    }
+
+    // Сохраняем расход
+    await db.expense.create({
+      data: {
+        amount,
+        description,
+        categoryId: category.id,
+        userId: user.id,
+      },
+    });
+
+    const descStr = description ? ` (${description})` : "";
+    return await ctx.reply(`✅ ${category.name}${descStr}: ${amount} 💸`);
+
+  } catch (error) {
+    console.error("Ошибка при обработке сообщения:", error);
+    return await ctx.reply("⚠️ Ошибка при записи. Проверьте консоль.");
   }
-
-  // Парсим: "категория описание сумма" или "категория сумма"
-  const parts = text.split(" ");
-  if (parts.length < 2) {
-    return; // невалидный формат, игнорируем
-  }
-
-  // Последняя часть — сумма
-  const amountStr = parts[parts.length - 1];
-  const amount = Number(amountStr);
-  if (isNaN(amount) || amount <= 0) {
-    return; // невалидная сумма, игнорируем
-  }
-
-  // Первая часть — категория (регистронезависимо)
-  const categoryName = parts[0]!.toLowerCase();
-
-  // Всё между категорией и суммой — описание (если есть)
-  const description = parts.length > 2 && parts.length >= 3
-    ? parts.slice(1, -1).join(" ")
-    : undefined;
-
-  const user = await getOrCreateUser(telegramId);
-
-  // Ищем категорию пользователя (регистронезависимо — категории хранятся в lowercase)
-  const category = await db.category.findFirst({
-    where: {
-      name: categoryName,
-      userId: user.id,
-    },
-  });
-
-  if (!category) {
-    // Категория не найдена — предлагаем создать
-    const createKeyboard = new InlineKeyboard()
-      .text(`✅ Создать "${categoryName}"`, `create_category:${categoryName}:${amount}:${description ?? ""}`)
-      .text("❌ Отмена", "cancel");
-
-    return ctx.reply(
-      `Категория "${categoryName}" не найдена. Создать?`,
-      { reply_markup: createKeyboard },
-    );
-  }
-
-  // Сохраняем расход
-  await db.expense.create({
-    data: {
-      amount,
-      description,
-      categoryId: category.id,
-      userId: user.id,
-    },
-  });
-
-  const descStr = description ? ` ${description}` : "";
-  return ctx.reply(`✅ ${category.name}${descStr}: ${amount} 💸`);
-});
+}); 
