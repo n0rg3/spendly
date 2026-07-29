@@ -3,7 +3,9 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev --filter=@sp3ndly/bot",
+    "dev": "turbo run dev",
+    "dev:bot": "turbo run dev --filter=@sp3ndly/bot",
+    "dev:web": "turbo run dev --filter=@sp3ndly/mini-app",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types"

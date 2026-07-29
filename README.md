@@ -1,3 +1,25 @@
+# Spendly
+
+Telegram Mini App для учёта расходов. В репозитории есть бот, база PostgreSQL и
+клиентское приложение в `apps/mini-app`.
+
+## Быстрый старт
+
+1. Скопируйте `.env.example` в `.env` и заполните `BOT_TOKEN`.
+2. Запустите PostgreSQL: `docker compose up -d`.
+3. Сгенерируйте Prisma Client и примените схему: `pnpm --filter @sp3ndly/database db:gen && pnpm --filter @sp3ndly/database db:push`.
+4. Запустите все приложения: `pnpm dev`.
+
+Vite откроет Mini App локально. Telegram требует публичный HTTPS-адрес, поэтому
+для тестирования откройте порт Vite через HTTPS-туннель и укажите выданный адрес
+в `MINI_APP_URL`. Перезапустите бота и отправьте ему `/start`.
+
+Клиент проверяет подпись `initData` на API-сервере перед доступом к данным. Для
+проверки в обычном браузере добавьте в `.env` тестовый `DEV_TELEGRAM_USER_ID`;
+в production эта переменная игнорируется.
+
+---
+
 # Turborepo starter
 
 This Turborepo starter is maintained by the Turborepo core team.
