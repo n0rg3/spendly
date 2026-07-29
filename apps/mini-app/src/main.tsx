@@ -375,6 +375,8 @@ function App() {
       formElement.reset();
       setShowExpenseForm(false);
       setExpenseCategory(undefined);
+      setAmountExpression("");
+      setCalcKeyboardOpen(false);
     } catch {
       setError("Не удалось добавить расход");
     } finally {
@@ -455,6 +457,8 @@ function App() {
         totalSpent: updatedExpenses.reduce((sum, e) => sum + e.amount, 0),
       });
       setEditingExpense(undefined);
+      setAmountExpression("");
+      setCalcKeyboardOpen(false);
     } catch {
       setError("Не удалось изменить трату");
     } finally {
@@ -647,11 +651,11 @@ function App() {
             const currentAmount = calcKeyboardTarget === "edit" ? amountExpression : String(editingExpense.amount);
             const evaluatedAmount = evaluateExpression(currentAmount);
             return (
-              <div className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} onClick={() => { setEditingExpense(undefined); setCalcKeyboardOpen(false); }}>
+              <div className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} onClick={() => { setEditingExpense(undefined); setCalcKeyboardOpen(false); setAmountExpression(""); }}>
                 <form className="expense-modal" onSubmit={updateExpense} onClick={(e) => e.stopPropagation()}>
                   <div className="form-heading">
                     <b>Редактировать</b>
-                    <button type="button" className="close-button" onClick={() => { setEditingExpense(undefined); setCalcKeyboardOpen(false); }}>×</button>
+                    <button type="button" className="close-button" onClick={() => { setEditingExpense(undefined); setCalcKeyboardOpen(false); setAmountExpression(""); }}>×</button>
                   </div>
                   <input type="hidden" name="amount" value={isNaN(evaluatedAmount) ? 0 : evaluatedAmount} />
                   <button
@@ -848,11 +852,11 @@ function App() {
           </section>
 
           {expenseCategory && (
-            <div className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} onClick={() => { setExpenseCategory(undefined); setCalcKeyboardOpen(false); }}>
+            <div className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} onClick={() => { setExpenseCategory(undefined); setCalcKeyboardOpen(false); setAmountExpression(""); }}>
               <form className="expense-modal" onSubmit={addExpense} onClick={(e) => e.stopPropagation()}>
                 <div className="form-heading">
                   <b>Новая трата</b>
-                  <button type="button" className="close-button" onClick={() => { setExpenseCategory(undefined); setCalcKeyboardOpen(false); }}>×</button>
+                  <button type="button" className="close-button" onClick={() => { setExpenseCategory(undefined); setCalcKeyboardOpen(false); setAmountExpression(""); }}>×</button>
                 </div>
                 <input type="hidden" name="amount" value={calcKeyboardTarget === "add" ? (isNaN(evaluateExpression(amountExpression)) ? 0 : evaluateExpression(amountExpression)) : 0} />
                 <button
