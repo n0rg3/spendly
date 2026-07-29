@@ -654,21 +654,19 @@ function App() {
                     <button type="button" className="close-button" onClick={() => { setEditingExpense(undefined); setCalcKeyboardOpen(false); }}>×</button>
                   </div>
                   <input type="hidden" name="amount" value={isNaN(evaluatedAmount) ? 0 : evaluatedAmount} />
-                  <input
-                    type="text"
-                    className="calc-amount-input"
-                    value={currentAmount}
-                    placeholder="Сумма, ₽"
-                    readOnly
-                    inputMode="none"
-                    onFocus={() => {
+                  <button
+                    type="button"
+                    className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "edit" ? "focused" : ""}`}
+                    onClick={() => {
                       if (calcKeyboardTarget !== "edit") {
                         setAmountExpression(String(editingExpense.amount));
                         setCalcKeyboardTarget("edit");
                       }
                       setCalcKeyboardOpen(true);
                     }}
-                  />
+                  >
+                    {currentAmount || "Сумма, ₽"}
+                  </button>
                   <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" onFocus={() => setCalcKeyboardOpen(false)} />
                   <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""} onFocus={() => setCalcKeyboardOpen(false)}>
                     <option value="">Без категории</option>
@@ -857,21 +855,19 @@ function App() {
                   <button type="button" className="close-button" onClick={() => { setExpenseCategory(undefined); setCalcKeyboardOpen(false); }}>×</button>
                 </div>
                 <input type="hidden" name="amount" value={calcKeyboardTarget === "add" ? (isNaN(evaluateExpression(amountExpression)) ? 0 : evaluateExpression(amountExpression)) : 0} />
-                <input
-                  type="text"
-                  className="calc-amount-input"
-                  value={calcKeyboardTarget === "add" ? amountExpression : ""}
-                  placeholder="Сумма, ₽"
-                  readOnly
-                  inputMode="none"
-                  onFocus={() => {
+                <button
+                  type="button"
+                  className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "add" ? "focused" : ""}`}
+                  onClick={() => {
                     if (calcKeyboardTarget !== "add") {
                       setAmountExpression("");
                       setCalcKeyboardTarget("add");
                     }
                     setCalcKeyboardOpen(true);
                   }}
-                />
+                >
+                  {calcKeyboardTarget === "add" ? (amountExpression || "Сумма, ₽") : "Сумма, ₽"}
+                </button>
                 <input name="description" maxLength={300} placeholder="Что купили?" onFocus={() => setCalcKeyboardOpen(false)} />
                 <select name="categoryId" defaultValue={expenseCategory.id} onFocus={() => setCalcKeyboardOpen(false)}>
                   {dashboard?.categories.map((category) => (

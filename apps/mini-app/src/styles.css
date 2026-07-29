@@ -415,8 +415,10 @@ nav {
 nav button { display: grid; gap: 4px; place-items: center; min-width: 54px; padding: 0; color: var(--hint-color); background: transparent; font-size: 10px; font-weight: 650; }
 nav button.active { color: var(--link-color); }
 
-/* ===== Amount Input (показывает выражение) ===== */
-.calc-amount-input {
+/* ===== Amount Display (показывает выражение, выглядит как input) ===== */
+.calc-amount-display {
+  display: flex;
+  align-items: center;
   width: 100%;
   height: 48px;
   border: 1px solid var(--border-color);
@@ -430,14 +432,17 @@ nav button.active { color: var(--link-color); }
   color: var(--text-color);
   -webkit-appearance: none;
   appearance: none;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-.calc-amount-input:focus {
+.calc-amount-display.focused {
   border-color: var(--accent-color);
 }
 
-.calc-amount-input[readonly] {
-  caret-color: transparent;
+.calc-amount-display:active {
+  background: color-mix(in srgb, var(--text-color) 6%, transparent);
 }
 
 /* ===== Modal shift when keyboard open ===== */
