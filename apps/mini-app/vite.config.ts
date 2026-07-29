@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   // Укажите имя вашего репозитория со слэшами с обеих сторон:
-  base: "https://github.com/n0rg3/spendly", 
+  base: "https://n0rg3.github.io/spendly/", 
   plugins: [react()],
   server: {
     host: true,
