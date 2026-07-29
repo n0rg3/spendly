@@ -2,7 +2,7 @@ name: Deploy Mini App to GitHub Pages
 
 on:
   push:
-    branches: ['main'] # или 'master', если основная ветка называется так
+    branches: ['main'] # Замените на 'master', если ваша ветка называется master
 
 permissions:
   contents: read
@@ -23,16 +23,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 1. Устанавливаем pnpm (если используете pnpm)
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9 # или укажите вашу версию pnpm
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
+          cache: 'pnpm'
 
+      # 2. Устанавливаем зависимости монорепозитория
       - name: Install dependencies
-        run: npm install
+        run: pnpm install
 
-      - name: Build project
-        run: npm run build
+      # 3. Собираем только Mini App (избегаем сборки лишних пакетов)
+      - name: Build Mini App
+        run: pnpm turbo run build --filter=@sp3ndly/mini-app
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -40,7 +49,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './dist'
+          # Указываем путь именно к папке dist внутри пакета mini-app
+          path: './apps/mini-app/dist' # 👈 Проверьте путь (apps/mini-app или packages/mini-app)
 
       - name: Deploy to GitHub Pages
         id: deployment
