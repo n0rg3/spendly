@@ -228,11 +228,43 @@ function App() {
   const [categoryIconValue, setCategoryIconValue] = useState("other");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [expandedAccId, setExpandedAccId] = useState<Set<string>>(new Set());
-  const [showCalcKeyboard, setShowCalcKeyboard] = useState(false);
-  const [calcKeyboardValue, setCalcKeyboardValue] = useState(0);
+  const [calcKeyboardOpen, setCalcKeyboardOpen] = useState(false);
+  const [amountExpression, setAmountExpression] = useState("");
   const [calcKeyboardTarget, setCalcKeyboardTarget] = useState<"add" | "edit">("add");
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
+
+  const OPERATORS = ["+", "-", "*", "/"];
+
+  function evaluateExpression(expression: string): number {
+    try {
+      const result = Function(`"use strict"; return (${expression})`)();
+      if (typeof result === "number" && isFinite(result)) {
+        return Math.round(result);
+      }
+      return NaN;
+    } catch {
+      return NaN;
+    }
+  }
+
+  const handleCalcInput = (char: string) => {
+    setAmountExpression((prev) => {
+      const lastChar = prev.slice(-1);
+      if (OPERATORS.includes(lastChar) && OPERATORS.includes(char)) {
+        return prev.slice(0, -1) + char;
+      }
+      return prev + char;
+    });
+  };
+
+  const handleCalcBackspace = () => {
+    setAmountExpression((prev) => prev.slice(0, -1));
+  };
+
+  const handleCalcSubmit = () => {
+    setCalcKeyboardOpen(false);
+  };
 
   // Реалтайм-подписка на Firestore
   useEffect(() => {
@@ -612,37 +644,43 @@ function App() {
           <div className="section-title"><h2>Последние траты</h2></div>
           {editingExpense && (() => {
             const initialDateTime = toLocalDateTime(editingExpense.createdAt);
+            const currentAmount = calcKeyboardTarget === "edit" ? amountExpression : String(editingExpense.amount);
+            const evaluatedAmount = evaluateExpression(currentAmount);
             return (
-              <div className="modal-backdrop" onClick={() => setEditingExpense(undefined)}>
+              <div className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} onClick={() => { setEditingExpense(undefined); setCalcKeyboardOpen(false); }}>
                 <form className="expense-modal" onSubmit={updateExpense} onClick={(e) => e.stopPropagation()}>
                   <div className="form-heading">
                     <b>Редактировать</b>
-                    <button type="button" className="close-button" onClick={() => setEditingExpense(undefined)}>×</button>
+                    <button type="button" className="close-button" onClick={() => { setEditingExpense(undefined); setCalcKeyboardOpen(false); }}>×</button>
                   </div>
-                  <input type="hidden" name="amount" value={calcKeyboardTarget === "edit" ? calcKeyboardValue : editingExpense.amount} />
-                  <button
-                    type="button"
-                    className="calc-amount-trigger"
-                    onClick={() => {
-                      setCalcKeyboardValue(editingExpense.amount);
-                      setCalcKeyboardTarget("edit");
-                      setShowCalcKeyboard(true);
+                  <input type="hidden" name="amount" value={isNaN(evaluatedAmount) ? 0 : evaluatedAmount} />
+                  <input
+                    type="text"
+                    className="calc-amount-input"
+                    value={currentAmount}
+                    placeholder="Сумма, ₽"
+                    readOnly={calcKeyboardOpen && calcKeyboardTarget === "edit"}
+                    onFocus={() => {
+                      if (calcKeyboardTarget !== "edit") {
+                        setAmountExpression(String(editingExpense.amount));
+                        setCalcKeyboardTarget("edit");
+                      }
+                      setCalcKeyboardOpen(true);
                     }}
-                  >
-                    {(calcKeyboardTarget === "edit" ? calcKeyboardValue : editingExpense.amount) > 0
-                      ? `${(calcKeyboardTarget === "edit" ? calcKeyboardValue : editingExpense.amount).toLocaleString("ru-RU")} ₽`
-                      : "Сумма, ₽"}
-                  </button>
-                  <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" />
-                  <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""}>
+                    onChange={(e) => {
+                      if (calcKeyboardTarget === "edit") setAmountExpression(e.target.value);
+                    }}
+                  />
+                  <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" onFocus={() => setCalcKeyboardOpen(false)} />
+                  <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""} onFocus={() => setCalcKeyboardOpen(false)}>
                     <option value="">Без категории</option>
                     {dashboard?.categories.map((category) => (
                       <option key={category.id} value={category.id}>{category.name}</option>
                     ))}
                   </select>
                   <div className="date-time">
-                    <input name="date" type="date" defaultValue={initialDateTime.date} required />
-                    <input name="time" type="time" defaultValue={initialDateTime.time} required />
+                    <input name="date" type="date" defaultValue={initialDateTime.date} required onFocus={() => setCalcKeyboardOpen(false)} />
+                    <input name="time" type="time" defaultValue={initialDateTime.time} required onFocus={() => setCalcKeyboardOpen(false)} />
                   </div>
                   <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
                 </form>
@@ -814,24 +852,32 @@ function App() {
           </section>
 
           {expenseCategory && (
-            <div className="modal-backdrop" onClick={() => setExpenseCategory(undefined)}>
+            <div className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} onClick={() => { setExpenseCategory(undefined); setCalcKeyboardOpen(false); }}>
               <form className="expense-modal" onSubmit={addExpense} onClick={(e) => e.stopPropagation()}>
-                <input type="hidden" name="amount" value={calcKeyboardTarget === "add" ? calcKeyboardValue : 0} />
-                <button
-                  type="button"
-                  className="calc-amount-trigger"
-                  onClick={() => {
-                    setCalcKeyboardValue(0);
-                    setCalcKeyboardTarget("add");
-                    setShowCalcKeyboard(true);
+                <div className="form-heading">
+                  <b>Новая трата</b>
+                  <button type="button" className="close-button" onClick={() => { setExpenseCategory(undefined); setCalcKeyboardOpen(false); }}>×</button>
+                </div>
+                <input type="hidden" name="amount" value={calcKeyboardTarget === "add" ? (isNaN(evaluateExpression(amountExpression)) ? 0 : evaluateExpression(amountExpression)) : 0} />
+                <input
+                  type="text"
+                  className="calc-amount-input"
+                  value={calcKeyboardTarget === "add" ? amountExpression : ""}
+                  placeholder="Сумма, ₽"
+                  readOnly={calcKeyboardOpen && calcKeyboardTarget === "add"}
+                  onFocus={() => {
+                    if (calcKeyboardTarget !== "add") {
+                      setAmountExpression("");
+                      setCalcKeyboardTarget("add");
+                    }
+                    setCalcKeyboardOpen(true);
                   }}
-                >
-                  {calcKeyboardTarget === "add" && calcKeyboardValue > 0
-                    ? `${calcKeyboardValue.toLocaleString("ru-RU")} ₽`
-                    : "Сумма, ₽"}
-                </button>
-                <input name="description" maxLength={300} placeholder="Что купили?" />
-                <select name="categoryId" defaultValue={expenseCategory.id}>
+                  onChange={(e) => {
+                    if (calcKeyboardTarget === "add") setAmountExpression(e.target.value);
+                  }}
+                />
+                <input name="description" maxLength={300} placeholder="Что купили?" onFocus={() => setCalcKeyboardOpen(false)} />
+                <select name="categoryId" defaultValue={expenseCategory.id} onFocus={() => setCalcKeyboardOpen(false)}>
                   {dashboard?.categories.map((category) => (
                     <option key={category.id} value={category.id}>{category.name}</option>
                   ))}
@@ -877,11 +923,11 @@ function App() {
         </>
       )}
 
-      {showCalcKeyboard && (
+      {calcKeyboardOpen && (editingExpense || expenseCategory) && (
         <CalculatorKeyboard
-          value={calcKeyboardValue}
-          onChange={(val) => setCalcKeyboardValue(val)}
-          onClose={() => setShowCalcKeyboard(false)}
+          onInput={handleCalcInput}
+          onBackspace={handleCalcBackspace}
+          onSubmit={handleCalcSubmit}
         />
       )}
 
