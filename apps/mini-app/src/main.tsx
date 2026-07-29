@@ -30,9 +30,27 @@ function currentMonthKey() {
 }
 
 function formatMonth(value: string) {
-  const [year, month] = value.split("-").map(Number);
-  return new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" })
-    .format(new Date(year, month - 1, 1));
+  if (!value || typeof value !== "string" || !value.includes("-")) {
+    return "";
+  }
+
+  const [yearStr, monthStr] = value.split("-");
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+
+  if (isNaN(year) || isNaN(month)) {
+    return "";
+  }
+
+  // Создаем дату с валидными числовыми значениями
+  const date = new Date(year, month - 1, 1);
+
+  // Дополнительная страховка от Invalid Date
+  if (isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" }).format(date);
 }
 
 const ICON_MAP: Record<string, keyof typeof LucideIcons> = {
