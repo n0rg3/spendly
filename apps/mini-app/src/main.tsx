@@ -1,6 +1,9 @@
+// apps/mini-app/src/App.tsx
 import { StrictMode, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import * as LucideIcons from "lucide-react";
+import { doc, setDoc, onSnapshot } from "firebase/firestore";
+import { db } from "./firebase";
 import "./styles.css";
 
 type Category = { id: string; name: string; icon: string | null; color: string | null };
@@ -8,12 +11,35 @@ type Expense = { id: string; amount: number; description: string | null; created
 type Dashboard = { categories: Category[]; expenses: Expense[]; totalSpent: number; userCreatedAt: string };
 type Tab = "categories" | "expenses" | "chart" | "savings";
 
+const DEFAULT_DASHBOARD: Dashboard = {
+  categories: [
+    { id: "1", name: "Еда", icon: "food", color: "#3390ec" },
+    { id: "2", name: "Транспорт", icon: "transport", color: "#2cb074" },
+    { id: "3", name: "Покупки", icon: "shopping", color: "#f7a200" },
+  ],
+  expenses: [],
+  totalSpent: 0,
+  userCreatedAt: new Date().toISOString(),
+};
+
 const tabItems: { id: Tab; label: string; icon: string }[] = [
   { id: "categories", label: "Категории", icon: "grid" },
   { id: "expenses", label: "Траты", icon: "card" },
   { id: "chart", label: "График", icon: "chart" },
   { id: "savings", label: "Накопления", icon: "goal" },
 ];
+
+function getUserId(): string {
+  const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+  if (tgUser?.id) return String(tgUser.id);
+
+  let localId = localStorage.getItem("spendly_dev_user_id");
+  if (!localId) {
+    localId = "dev_user_" + Math.random().toString(36).substring(2, 9);
+    localStorage.setItem("spendly_dev_user_id", localId);
+  }
+  return localId;
+}
 
 function toLocalDateTime(value: string) {
   const date = new Date(value);
@@ -38,17 +64,10 @@ function formatMonth(value: string) {
   const year = parseInt(yearStr, 10);
   const month = parseInt(monthStr, 10);
 
-  if (isNaN(year) || isNaN(month)) {
-    return "";
-  }
+  if (isNaN(year) || isNaN(month)) return "";
 
-  // Создаем дату с валидными числовыми значениями
   const date = new Date(year, month - 1, 1);
-
-  // Дополнительная страховка от Invalid Date
-  if (isNaN(date.getTime())) {
-    return "";
-  }
+  if (isNaN(date.getTime())) return "";
 
   return new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" }).format(date);
 }
@@ -199,142 +218,221 @@ function App() {
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
 
-  const request = async <T,>(path: string, options?: RequestInit): Promise<T> => {
-    const response = await fetch(path, {
-      ...options,
-      headers: {
-        ...(options?.body ? { "Content-Type": "application/json" } : {}),
-        ...(telegram?.initData ? { Authorization: `tma ${telegram.initData}` } : {}),
-        ...options?.headers,
-      },
-    });
-    const data = response.status === 204
-      ? ({} as T & { error?: string })
-      : (await response.json()) as T & { error?: string };
-    if (!response.ok) throw new Error(data.error ?? "Не удалось выполнить запрос");
-    return data;
-  };
-
-  const loadDashboard = async () => {
-    try {
-      setError(undefined);
-      setDashboard(await request<Dashboard>(`/api/dashboard?month=${selectedMonth}`));
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Не удалось загрузить данные");
-    }
-  };
-
+  // Реалтайм-подписка на Firestore
   useEffect(() => {
     telegram?.ready();
     telegram?.expand();
-    void loadDashboard();
-  }, [selectedMonth]);
+
+    const userId = getUserId();
+    const userDocRef = doc(db, "users", userId);
+
+    const unsubscribe = onSnapshot(
+      userDocRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setDashboard(docSnap.data() as Dashboard);
+        } else {
+          void setDoc(userDocRef, DEFAULT_DASHBOARD);
+          setDashboard(DEFAULT_DASHBOARD);
+        }
+      },
+      (err) => {
+        console.error("Firestore error:", err);
+        setError("Ошибка подключения к облаку");
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  const saveToFirebase = async (updated: Dashboard) => {
+    const userId = getUserId();
+    await setDoc(doc(db, "users", userId), updated);
+  };
+
+  const filteredExpenses = useMemo(() => {
+    if (!dashboard?.expenses) return [];
+    return dashboard.expenses.filter((e) => {
+      if (!e.createdAt) return false;
+      return e.createdAt.startsWith(selectedMonth);
+    });
+  }, [dashboard, selectedMonth]);
+
+  const filteredTotalSpent = useMemo(() => {
+    return filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
+  }, [filteredExpenses]);
 
   const addCategory = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const name = String(form.get("categoryName") ?? "");
+    const name = String(form.get("categoryName") ?? "").trim();
     const icon = String(form.get("categoryIcon") ?? "other");
+
     if (dashboard?.categories.some((c) => c.icon === icon)) {
       setError(`Иконка «${ICON_LABELS[icon] ?? icon}» уже используется`);
       return;
     }
-    if (!name.trim()) return;
+    if (!name || !dashboard) return;
+
     setIsSubmitting(true);
+    setError(undefined);
     try {
-      await request<Category>("/api/categories", { method: "POST", body: JSON.stringify({ name, icon }) });
+      const newCategory: Category = { id: String(Date.now()), name, icon, color: null };
+      const updated: Dashboard = {
+        ...dashboard,
+        categories: [...dashboard.categories, newCategory],
+      };
+
+      await saveToFirebase(updated);
       formElement.reset();
       setShowCategoryForm(false);
-      await loadDashboard();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Не удалось создать категорию");
-    } finally { setIsSubmitting(false); }
+    } catch {
+      setError("Не удалось создать категорию");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const addExpense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    const amount = Number(form.get("amount"));
+    const description = String(form.get("description") ?? "");
+    const categoryId = String(form.get("categoryId") ?? "");
+
+    if (!amount || amount <= 0 || !dashboard) return;
+
     setIsSubmitting(true);
+    setError(undefined);
     try {
-      await request<Expense>("/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({ amount: Number(form.get("amount")), description: String(form.get("description") ?? ""), categoryId: String(form.get("categoryId") ?? "") || undefined }),
-      });
+      const category = dashboard.categories.find((c) => c.id === categoryId) || null;
+      const newExpense: Expense = {
+        id: String(Date.now()),
+        amount,
+        description,
+        createdAt: new Date().toISOString(),
+        category,
+      };
+
+      const newExpenses = [newExpense, ...dashboard.expenses];
+      const updated: Dashboard = {
+        ...dashboard,
+        expenses: newExpenses,
+        totalSpent: newExpenses.reduce((sum, e) => sum + e.amount, 0),
+      };
+
+      await saveToFirebase(updated);
       formElement.reset();
       setShowExpenseForm(false);
       setExpenseCategory(undefined);
-      await loadDashboard();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Не удалось добавить расход");
-    } finally { setIsSubmitting(false); }
+    } catch {
+      setError("Не удалось добавить расход");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const updateCategory = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!editingCategory) return;
+    if (!editingCategory || !dashboard) return;
+
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const name = String(form.get("categoryName") ?? "");
+    const name = String(form.get("categoryName") ?? "").trim();
     const icon = String(form.get("categoryIcon") ?? "other");
-    if (dashboard?.categories.some((c) => c.id !== editingCategory?.id && c.icon === icon)) {
+
+    if (dashboard.categories.some((c) => c.id !== editingCategory.id && c.icon === icon)) {
       setError(`Иконка «${ICON_LABELS[icon] ?? icon}» уже используется`);
       return;
     }
-    if (!name.trim()) return;
+    if (!name) return;
+
     setIsSubmitting(true);
+    setError(undefined);
     try {
-      await request<Category>(`/api/categories/${editingCategory.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ name, icon }),
+      const updatedCategories = dashboard.categories.map((c) =>
+        c.id === editingCategory.id ? { ...c, name, icon } : c
+      );
+
+      // Обновляем ссылку на категорию во всех привязанных тратах
+      const updatedExpenses = dashboard.expenses.map((e) => {
+        if (e.category?.id === editingCategory.id) {
+          return { ...e, category: { ...e.category, name, icon } };
+        }
+        return e;
       });
+
+      await saveToFirebase({ ...dashboard, categories: updatedCategories, expenses: updatedExpenses });
       setEditingCategory(undefined);
-      await loadDashboard();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Не удалось изменить категорию");
-    } finally { setIsSubmitting(false); }
+    } catch {
+      setError("Не удалось изменить категорию");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const updateExpense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!editingExpense) return;
+    if (!editingExpense || !dashboard) return;
+
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const localDateTime = `${String(form.get("date"))}T${String(form.get("time"))}`;
     const createdAt = new Date(localDateTime);
+
     if (Number.isNaN(createdAt.getTime())) {
       setError("Укажите корректные дату и время");
       return;
     }
+
+    const amount = Number(form.get("amount"));
+    const description = String(form.get("description") ?? "");
+    const categoryId = String(form.get("categoryId") ?? "");
+    const category = dashboard.categories.find((c) => c.id === categoryId) || null;
+
     setIsSubmitting(true);
+    setError(undefined);
     try {
-      await request<Expense>(`/api/expenses/${editingExpense.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          amount: Number(form.get("amount")),
-          description: String(form.get("description") ?? ""),
-          categoryId: String(form.get("categoryId") ?? "") || undefined,
-          createdAt: createdAt.toISOString(),
-        }),
+      const updatedExpenses = dashboard.expenses.map((e) =>
+        e.id === editingExpense.id
+          ? { ...e, amount, description, category, createdAt: createdAt.toISOString() }
+          : e
+      );
+
+      await saveToFirebase({
+        ...dashboard,
+        expenses: updatedExpenses,
+        totalSpent: updatedExpenses.reduce((sum, e) => sum + e.amount, 0),
       });
       setEditingExpense(undefined);
-      await loadDashboard();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Не удалось изменить трату");
-    } finally { setIsSubmitting(false); }
+    } catch {
+      setError("Не удалось изменить трату");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const deleteCategory = async () => {
-    if (!editingCategory || !window.confirm(`Удалить категорию «${editingCategory.name}»?`)) return;
+    if (!editingCategory || !dashboard || !window.confirm(`Удалить категорию «${editingCategory.name}»?`)) return;
+
     setIsSubmitting(true);
+    setError(undefined);
     try {
-      await request<void>(`/api/categories/${editingCategory.id}`, { method: "DELETE" });
+      const updatedCategories = dashboard.categories.filter((c) => c.id !== editingCategory.id);
+      // Убираем категорию из расходов
+      const updatedExpenses = dashboard.expenses.map((e) =>
+        e.category?.id === editingCategory.id ? { ...e, category: null } : e
+      );
+
+      await saveToFirebase({ ...dashboard, categories: updatedCategories, expenses: updatedExpenses });
       setEditingCategory(undefined);
-      await loadDashboard();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Не удалось удалить категорию");
-    } finally { setIsSubmitting(false); }
+    } catch {
+      setError("Не удалось удалить категорию");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const startCategoryPress = (category: Category) => {
@@ -353,36 +451,67 @@ function App() {
 
   const categoryStats = useMemo(() => {
     const data = new Map<string, { id: string; name: string; amount: number; color: string }>();
-    const colors = ["var(--button-color)", "color-mix(in srgb, var(--button-color) 80%, white)", "color-mix(in srgb, var(--button-color) 60%, white)", "color-mix(in srgb, var(--button-color) 40%, white)", "color-mix(in srgb, var(--button-color) 20%, white)"];
-    dashboard?.expenses.forEach((expense) => {
+    const colors = [
+      "var(--button-color)",
+      "color-mix(in srgb, var(--button-color) 80%, white)",
+      "color-mix(in srgb, var(--button-color) 60%, white)",
+      "color-mix(in srgb, var(--button-color) 40%, white)",
+      "color-mix(in srgb, var(--button-color) 20%, white)",
+    ];
+
+    filteredExpenses.forEach((expense) => {
       const key = expense.category?.id ?? "other";
-      const current = data.get(key) ?? { id: key, name: expense.category?.name ?? "Другое", amount: 0, color: expense.category?.color ?? colors[data.size % colors.length] };
+      const current = data.get(key) ?? {
+        id: key,
+        name: expense.category?.name ?? "Другое",
+        amount: 0,
+        color: expense.category?.color ?? colors[data.size % colors.length],
+      };
       current.amount += expense.amount;
       data.set(key, current);
     });
+
     return [...data.values()].sort((a, b) => b.amount - a.amount);
-  }, [dashboard]);
+  }, [filteredExpenses]);
 
   const chartBackground = useMemo(() => {
     const total = categoryStats.reduce((sum, item) => sum + item.amount, 0);
     if (!total) return "conic-gradient(#e9ebf3 0 100%)";
     let position = 0;
-    return `conic-gradient(${categoryStats.map((item) => {
-      const end = position + (item.amount / total) * 100;
-      const segment = `${item.color} ${position}% ${end}%`;
-      position = end;
-      return segment;
-    }).join(", ")})`;
+    return `conic-gradient(${categoryStats
+      .map((item) => {
+        const end = position + (item.amount / total) * 100;
+        const segment = `${item.color} ${position}% ${end}%`;
+        position = end;
+        return segment;
+      })
+      .join(", ")})`;
   }, [categoryStats]);
 
-  const user = telegram?.initDataUnsafe.user;
-  const sortedCategories = [...(dashboard?.categories ?? [])].sort((left, right) => left.name.localeCompare(right.name, "ru"));
+  const user = telegram?.initDataUnsafe?.user;
+  const sortedCategories = [...(dashboard?.categories ?? [])].sort((left, right) =>
+    left.name.localeCompare(right.name, "ru")
+  );
   const [selectedYear, selectedMonthNumber] = selectedMonth.split("-").map(Number);
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
   const startYear = dashboard?.userCreatedAt ? new Date(dashboard.userCreatedAt).getFullYear() : currentYear;
-  const monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+  const monthNames = [
+    "Январь",
+    "Февраль",
+    "Март",
+    "Апрель",
+    "Май",
+    "Июнь",
+    "Июль",
+    "Август",
+    "Сентябрь",
+    "Октябрь",
+    "Ноябрь",
+    "Декабрь",
+  ];
+
   const changeMonthPart = (year: number, month: number) => {
     let targetMonth = month;
     if (year === currentYear && month > currentMonth) targetMonth = currentMonth;
@@ -392,14 +521,14 @@ function App() {
 
   const groupedExpenses = useMemo(() => {
     const grouped = new Map<string, Expense[]>();
-    dashboard?.expenses.forEach((ex) => {
+    filteredExpenses.forEach((ex) => {
       const key = ex.category?.id ?? "other";
       const group = grouped.get(key) ?? [];
       group.push(ex);
       grouped.set(key, group);
     });
     return grouped;
-  }, [dashboard]);
+  }, [filteredExpenses]);
 
   const toggleAccordion = (id: string) => {
     const next = new Set(expandedAccId);
@@ -408,185 +537,322 @@ function App() {
     setExpandedAccId(next);
   };
 
-  return <main onClick={() => { setShowMonthPicker(false); setIconPickerOpen(false); }}>
-    <header className="categories-header">
-      {activeTab === "savings" ? (
-        <>
-          <div className="month-control">
-            <button className="month-picker" onClick={(e) => { e.stopPropagation(); setShowMonthPicker((visible) => !visible); }}>
-              <span>{selectedYear} год</span>
-            </button>
-            {showMonthPicker && (
-              <div className="month-menu" style={{ gridTemplateColumns: "1fr" }} onClick={(e) => e.stopPropagation()}>
-                <select value={selectedYear} onChange={(event) => changeMonthPart(Number(event.target.value), selectedMonthNumber)}>
-                  {Array.from({ length: Math.max(1, currentYear - startYear + 1) }, (_, index) => currentYear - index).map((year) => (
-                    <option key={year} value={year}>{year}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
-          <div className="avatar">{user?.first_name?.slice(0, 1) ?? "S"}</div>
-        </>
-      ) : (
-        <>
-          <div className="month-control">
-            <button className="month-picker" onClick={(e) => { e.stopPropagation(); setShowMonthPicker((visible) => !visible); }}>
-              <span>{formatMonth(selectedMonth)}</span>
-            </button>
-            {showMonthPicker && (
-              <div className="month-menu" onClick={(e) => e.stopPropagation()}>
-                <select value={selectedMonthNumber} onChange={(event) => changeMonthPart(selectedYear, Number(event.target.value))}>
-                  {monthNames.map((month, index) => (
-                    <option key={month} value={index + 1} disabled={selectedYear === currentYear && index + 1 > currentMonth}>
-                      {month}
-                    </option>
-                  ))}
-                </select>
-                <select value={selectedYear} onChange={(event) => changeMonthPart(Number(event.target.value), selectedMonthNumber)}>
-                  {Array.from({ length: Math.max(1, currentYear - startYear + 1) }, (_, index) => currentYear - index).map((year) => (
-                    <option key={year} value={year}>
-                      {year}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
-          <div className="month-total">
-            <small>Траты за {formatMonth(selectedMonth)}</small>
-            <b>{formatMoney(dashboard?.totalSpent ?? 0)}</b>
-          </div>
-        </>
-      )}
-    </header>
-    {error && <p className="notice">{error}</p>}
-
-    {activeTab === "expenses" && <>
-      <div className="section-title"><h2>Последние траты</h2></div>
-      {editingExpense && (() => {
-        const initialDateTime = toLocalDateTime(editingExpense.createdAt);
-        return <div className="modal-backdrop" onClick={() => setEditingExpense(undefined)}><form className="expense-modal" onSubmit={updateExpense} onClick={(e) => e.stopPropagation()}><div className="form-heading"><b>Редактировать</b><button type="button" className="close-button" onClick={() => setEditingExpense(undefined)}>×</button></div><input name="amount" type="number" min="1" step="1" defaultValue={editingExpense.amount} required autoFocus /><input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" /><select name="categoryId" defaultValue={editingExpense.category?.id ?? ""}><option value="">Без категории</option>{dashboard?.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select><div className="date-time"><input name="date" type="date" defaultValue={initialDateTime.date} required /><input name="time" type="time" defaultValue={initialDateTime.time} required /></div><button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button></form></div>;
-      })()}
-
-      <div className="accordion-list">
-        <div className="accordion-item">
-          <button className={`accordion-trigger ${expandedAccId.has("all") ? "active" : ""}`} onClick={() => toggleAccordion("all")}>
-            <span>Все траты</span>
-            <div className="accordion-right">
-              <b>{formatMoney(dashboard?.totalSpent ?? 0)}</b>
-              <Icon name="arrow" />
-            </div>
-          </button>
-          {expandedAccId.has("all") && <div className="accordion-content list-card">{dashboard?.expenses.map(ex => <ExpenseRow key={ex.id} expense={ex} onClick={() => setEditingExpense(ex)} />)}</div>}
-        </div>
-
-        {[...groupedExpenses.entries()].map(([catId, expenses]) => {
-          const category = expenses[0].category;
-          const total = expenses.reduce((sum, e) => sum + e.amount, 0);
-          return (
-            <div className="accordion-item" key={catId}>
-              <button className={`accordion-trigger ${expandedAccId.has(catId) ? "active" : ""}`} onClick={() => toggleAccordion(catId)}>
-                <div className="accordion-left">
-                  <span className="mini-icon">{category?.icon ? <Icon name={category.icon} /> : "•"}</span>
-                  <span>{category?.name ?? "Без категории"}</span>
+  return (
+    <main onClick={() => { setShowMonthPicker(false); setIconPickerOpen(false); }}>
+      <header className="categories-header">
+        {activeTab === "savings" ? (
+          <>
+            <div className="month-control">
+              <button className="month-picker" onClick={(e) => { e.stopPropagation(); setShowMonthPicker((v) => !v); }}>
+                <span>{selectedYear} год</span>
+              </button>
+              {showMonthPicker && (
+                <div className="month-menu" style={{ gridTemplateColumns: "1fr" }} onClick={(e) => e.stopPropagation()}>
+                  <select value={selectedYear} onChange={(event) => changeMonthPart(Number(event.target.value), selectedMonthNumber)}>
+                    {Array.from({ length: Math.max(1, currentYear - startYear + 1) }, (_, index) => currentYear - index).map((year) => (
+                      <option key={year} value={year}>{year}</option>
+                    ))}
+                  </select>
                 </div>
+              )}
+            </div>
+            <div className="avatar">{user?.first_name?.slice(0, 1) ?? "S"}</div>
+          </>
+        ) : (
+          <>
+            <div className="month-control">
+              <button className="month-picker" onClick={(e) => { e.stopPropagation(); setShowMonthPicker((v) => !v); }}>
+                <span>{formatMonth(selectedMonth)}</span>
+              </button>
+              {showMonthPicker && (
+                <div className="month-menu" onClick={(e) => e.stopPropagation()}>
+                  <select value={selectedMonthNumber} onChange={(event) => changeMonthPart(selectedYear, Number(event.target.value))}>
+                    {monthNames.map((month, index) => (
+                      <option key={month} value={index + 1} disabled={selectedYear === currentYear && index + 1 > currentMonth}>
+                        {month}
+                      </option>
+                    ))}
+                  </select>
+                  <select value={selectedYear} onChange={(event) => changeMonthPart(Number(event.target.value), selectedMonthNumber)}>
+                    {Array.from({ length: Math.max(1, currentYear - startYear + 1) }, (_, index) => currentYear - index).map((year) => (
+                      <option key={year} value={year}>{year}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="month-total">
+              <small>Траты за {formatMonth(selectedMonth)}</small>
+              <b>{formatMoney(filteredTotalSpent)}</b>
+            </div>
+          </>
+        )}
+      </header>
+
+      {error && <p className="notice">{error}</p>}
+
+      {activeTab === "expenses" && (
+        <>
+          <div className="section-title"><h2>Последние траты</h2></div>
+          {editingExpense && (() => {
+            const initialDateTime = toLocalDateTime(editingExpense.createdAt);
+            return (
+              <div className="modal-backdrop" onClick={() => setEditingExpense(undefined)}>
+                <form className="expense-modal" onSubmit={updateExpense} onClick={(e) => e.stopPropagation()}>
+                  <div className="form-heading">
+                    <b>Редактировать</b>
+                    <button type="button" className="close-button" onClick={() => setEditingExpense(undefined)}>×</button>
+                  </div>
+                  <input name="amount" type="number" min="1" step="1" defaultValue={editingExpense.amount} required autoFocus />
+                  <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" />
+                  <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""}>
+                    <option value="">Без категории</option>
+                    {dashboard?.categories.map((category) => (
+                      <option key={category.id} value={category.id}>{category.name}</option>
+                    ))}
+                  </select>
+                  <div className="date-time">
+                    <input name="date" type="date" defaultValue={initialDateTime.date} required />
+                    <input name="time" type="time" defaultValue={initialDateTime.time} required />
+                  </div>
+                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
+                </form>
+              </div>
+            );
+          })()}
+
+          <div className="accordion-list">
+            <div className="accordion-item">
+              <button className={`accordion-trigger ${expandedAccId.has("all") ? "active" : ""}`} onClick={() => toggleAccordion("all")}>
+                <span>Все траты</span>
                 <div className="accordion-right">
-                  <b>{formatMoney(total)}</b>
+                  <b>{formatMoney(filteredTotalSpent)}</b>
                   <Icon name="arrow" />
                 </div>
               </button>
-              {expandedAccId.has(catId) && <div className="accordion-content list-card">{expenses.map(ex => <ExpenseRow key={ex.id} expense={ex} onClick={() => setEditingExpense(ex)} />)}</div>}
-            </div>
-          );
-        })}
-      </div>
-      {!dashboard?.expenses.length && <p className="empty">Добавьте первую трату.</p>}
-    </>}
-
-    {activeTab === "categories" && <>
-      {editingCategory ? (
-        <div className="modal-backdrop" onClick={() => setEditingCategory(undefined)}>
-          <form className="expense-modal" onSubmit={updateCategory} onClick={(e) => e.stopPropagation()}>
-            <div className="form-heading"><b>Редактировать</b><button type="button" className="close-button" onClick={() => setEditingCategory(undefined)}>×</button></div>
-            <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Название" required autoFocus />
-            <div className="icon-dropdown">
-              <input type="hidden" name="categoryIcon" value={categoryIconValue} />
-              <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((open) => !open); }}>
-                <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
-                <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Другое"}</span>
-                <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
-              </button>
-              {iconPickerOpen && (
-                <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
-                  {CATEGORY_ICONS.map((icon) => {
-                    const used = dashboard?.categories.some((c) => c.icon === icon && c.id !== editingCategory?.id);
-                    return (
-                      <button
-                        type="button"
-                        key={icon}
-                        className={`icon-dropdown-option${categoryIconValue === icon ? " selected" : ""}`}
-                        onClick={() => { setCategoryIconValue(icon); setIconPickerOpen(false); }}
-                        disabled={used}
-                      >
-                        <Icon name={icon} />
-                      </button>
-                    );
-                  })}
+              {expandedAccId.has("all") && (
+                <div className="accordion-content list-card">
+                  {filteredExpenses.map((ex) => (
+                    <ExpenseRow key={ex.id} expense={ex} onClick={() => setEditingExpense(ex)} />
+                  ))}
                 </div>
               )}
             </div>
-            <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
-            <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteCategory}>Удалить</button>
-          </form>
-        </div>
-      ) : showCategoryForm ? (
-        <div className="modal-backdrop" onClick={() => setShowCategoryForm(false)}>
-          <form className="expense-modal" onSubmit={addCategory} onClick={(e) => e.stopPropagation()}>
-            <div className="form-heading"><b>Категория</b><button type="button" className="close-button" onClick={() => setShowCategoryForm(false)}>×</button></div>
-            <input name="categoryName" maxLength={50} placeholder="Название" required autoFocus />
-            <div className="icon-dropdown">
-              <input type="hidden" name="categoryIcon" value={categoryIconValue} />
-              <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((open) => !open); }}>
-                <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
-                <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Другое"}</span>
-                <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
-              </button>
-              {iconPickerOpen && (
-                <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
-              {CATEGORY_ICONS.map((icon) => {
-                const used = dashboard?.categories.some((c) => c.icon === icon);
-                return (
-                  <button
-                    type="button"
-                    key={icon}
-                    className={`icon-dropdown-option${categoryIconValue === icon ? " selected" : ""}`}
-                    onClick={() => { setCategoryIconValue(icon); setIconPickerOpen(false); }}
-                    disabled={used}
-                  >
-                    <Icon name={icon} />
+
+            {[...groupedExpenses.entries()].map(([catId, expenses]) => {
+              const category = expenses[0].category;
+              const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+              return (
+                <div className="accordion-item" key={catId}>
+                  <button className={`accordion-trigger ${expandedAccId.has(catId) ? "active" : ""}`} onClick={() => toggleAccordion(catId)}>
+                    <div className="accordion-left">
+                      <span className="mini-icon">{category?.icon ? <Icon name={category.icon} /> : "•"}</span>
+                      <span>{category?.name ?? "Без категории"}</span>
+                    </div>
+                    <div className="accordion-right">
+                      <b>{formatMoney(total)}</b>
+                      <Icon name="arrow" />
+                    </div>
                   </button>
-                );
-              })}
+                  {expandedAccId.has(catId) && (
+                    <div className="accordion-content list-card">
+                      {expenses.map((ex) => (
+                        <ExpenseRow key={ex.id} expense={ex} onClick={() => setEditingExpense(ex)} />
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
+              );
+            })}
+          </div>
+          {!filteredExpenses.length && <p className="empty">В этом месяце трат нет.</p>}
+        </>
+      )}
+
+      {activeTab === "categories" && (
+        <>
+          {editingCategory ? (
+            <div className="modal-backdrop" onClick={() => setEditingCategory(undefined)}>
+              <form className="expense-modal" onSubmit={updateCategory} onClick={(e) => e.stopPropagation()}>
+                <div className="form-heading">
+                  <b>Редактировать</b>
+                  <button type="button" className="close-button" onClick={() => setEditingCategory(undefined)}>×</button>
+                </div>
+                <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Название" required autoFocus />
+                <div className="icon-dropdown">
+                  <input type="hidden" name="categoryIcon" value={categoryIconValue} />
+                  <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
+                    <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
+                    <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Другое"}</span>
+                    <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
+                  </button>
+                  {iconPickerOpen && (
+                    <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
+                      {CATEGORY_ICONS.map((icon) => {
+                        const used = dashboard?.categories.some((c) => c.icon === icon && c.id !== editingCategory?.id);
+                        return (
+                          <button
+                            type="button"
+                            key={icon}
+                            className={`icon-dropdown-option${categoryIconValue === icon ? " selected" : ""}`}
+                            onClick={() => { setCategoryIconValue(icon); setIconPickerOpen(false); }}
+                            disabled={used}
+                          >
+                            <Icon name={icon} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
+                <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteCategory}>Удалить</button>
+              </form>
             </div>
-            <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Создать"}</button>
-          </form>
-        </div>
-      ) : null}
-      <section className="category-icon-grid">{sortedCategories.map((category) => <button className="category-icon-button" key={category.id} onPointerDown={() => startCategoryPress(category)} onPointerUp={endCategoryPress} onPointerCancel={endCategoryPress} onContextMenu={(event) => event.preventDefault()} onClick={() => { if (didLongPress.current) { didLongPress.current = false; return; } setExpenseCategory(category); }}><span className="system-icon-bg"><Icon name={category.icon || "other"} /></span><b>{category.name}</b><small>{formatMoney(categoryStats.find((item) => item.id === category.id)?.amount ?? 0)}</small></button>)}<button className="category-icon-button add-category-button" onClick={() => { setEditingCategory(undefined); setCategoryIconValue("other"); setIconPickerOpen(false); setShowCategoryForm(true); }}><span><Icon name="plus" /></span><b>Добавить</b></button></section>
-      {expenseCategory && <div className="modal-backdrop" onClick={() => setExpenseCategory(undefined)}><form className="expense-modal" onSubmit={addExpense} onClick={(e) => e.stopPropagation()}><input name="amount" type="number" min="1" step="1" placeholder="Сумма, ₽" required autoFocus /><input name="description" maxLength={300} placeholder="Что купили?" /><select name="categoryId" defaultValue={expenseCategory.id}>{dashboard?.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select><button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button></form></div>}
-    </>}
+          ) : showCategoryForm ? (
+            <div className="modal-backdrop" onClick={() => setShowCategoryForm(false)}>
+              <form className="expense-modal" onSubmit={addCategory} onClick={(e) => e.stopPropagation()}>
+                <div className="form-heading">
+                  <b>Категория</b>
+                  <button type="button" className="close-button" onClick={() => setShowCategoryForm(false)}>×</button>
+                </div>
+                <input name="categoryName" maxLength={50} placeholder="Название" required autoFocus />
+                <div className="icon-dropdown">
+                  <input type="hidden" name="categoryIcon" value={categoryIconValue} />
+                  <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
+                    <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
+                    <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Другое"}</span>
+                    <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
+                  </button>
+                  {iconPickerOpen && (
+                    <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
+                      {CATEGORY_ICONS.map((icon) => {
+                        const used = dashboard?.categories.some((c) => c.icon === icon);
+                        return (
+                          <button
+                            type="button"
+                            key={icon}
+                            className={`icon-dropdown-option${categoryIconValue === icon ? " selected" : ""}`}
+                            onClick={() => { setCategoryIconValue(icon); setIconPickerOpen(false); }}
+                            disabled={used}
+                          >
+                            <Icon name={icon} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Создать"}</button>
+              </form>
+            </div>
+          ) : null}
 
-    {activeTab === "chart" && <>
-      <section className="chart-card"><div className="donut" style={{ background: chartBackground }}><div><small>Всего</small><b>{formatMoney(dashboard?.totalSpent ?? 0)}</b></div></div><div className="legend">{categoryStats.map((item) => <div key={item.name}><i style={{ background: item.color }} /><span>{item.name}</span><b>{formatMoney(item.amount)}</b></div>)}{categoryStats.length === 0 && <p className="empty">Данные появятся после добавления трат.</p>}</div></section>
-    </>}
+          <section className="category-icon-grid">
+            {sortedCategories.map((category) => (
+              <button
+                className="category-icon-button"
+                key={category.id}
+                onPointerDown={() => startCategoryPress(category)}
+                onPointerUp={endCategoryPress}
+                onPointerCancel={endCategoryPress}
+                onContextMenu={(e) => e.preventDefault()}
+                onClick={() => {
+                  if (didLongPress.current) {
+                    didLongPress.current = false;
+                    return;
+                  }
+                  setExpenseCategory(category);
+                }}
+              >
+                <span className="system-icon-bg"><Icon name={category.icon || "other"} /></span>
+                <b>{category.name}</b>
+                <small>{formatMoney(categoryStats.find((item) => item.id === category.id)?.amount ?? 0)}</small>
+              </button>
+            ))}
+            <button
+              className="category-icon-button add-category-button"
+              onClick={() => {
+                setEditingCategory(undefined);
+                setCategoryIconValue("other");
+                setIconPickerOpen(false);
+                setShowCategoryForm(true);
+              }}
+            >
+              <span><Icon name="plus" /></span>
+              <b>Добавить</b>
+            </button>
+          </section>
 
-    {activeTab === "savings" && <><section className="savings-card"><span className="savings-icon"><Icon name="goal" /></span><h2>Создайте первую цель</h2><p>Например, отпуск, новый телефон или финансовую подушку.</p><button type="button">Добавить накопление</button></section></>}
+          {expenseCategory && (
+            <div className="modal-backdrop" onClick={() => setExpenseCategory(undefined)}>
+              <form className="expense-modal" onSubmit={addExpense} onClick={(e) => e.stopPropagation()}>
+                <input name="amount" type="number" min="1" step="1" placeholder="Сумма, ₽" required autoFocus />
+                <input name="description" maxLength={300} placeholder="Что купили?" />
+                <select name="categoryId" defaultValue={expenseCategory.id}>
+                  {dashboard?.categories.map((category) => (
+                    <option key={category.id} value={category.id}>{category.name}</option>
+                  ))}
+                </select>
+                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
+              </form>
+            </div>
+          )}
+        </>
+      )}
 
-    <nav aria-label="Основная навигация">{tabItems.map((item) => <button key={item.id} className={activeTab === item.id ? "active" : ""} onClick={() => setActiveTab(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>)}</nav>
-  </main>;
+      {activeTab === "chart" && (
+        <>
+          <section className="chart-card">
+            <div className="donut" style={{ background: chartBackground }}>
+              <div>
+                <small>Всего</small>
+                <b>{formatMoney(filteredTotalSpent)}</b>
+              </div>
+            </div>
+            <div className="legend">
+              {categoryStats.map((item) => (
+                <div key={item.name}>
+                  <i style={{ background: item.color }} />
+                  <span>{item.name}</span>
+                  <b>{formatMoney(item.amount)}</b>
+                </div>
+              ))}
+              {categoryStats.length === 0 && <p className="empty">Данные появятся после добавления трат.</p>}
+            </div>
+          </section>
+        </>
+      )}
+
+      {activeTab === "savings" && (
+        <>
+          <section className="savings-card">
+            <span className="savings-icon"><Icon name="goal" /></span>
+            <h2>Создайте первую цель</h2>
+            <p>Например, отпуск, новый телефон или финансовую подушку.</p>
+            <button type="button">Добавить накопление</button>
+          </section>
+        </>
+      )}
+
+      <nav aria-label="Основная навигация">
+        {tabItems.map((item) => (
+          <button
+            key={item.id}
+            className={activeTab === item.id ? "active" : ""}
+            onClick={() => setActiveTab(item.id)}
+          >
+            <Icon name={item.icon} />
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </nav>
+    </main>
+  );
 }
 
-createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+);
