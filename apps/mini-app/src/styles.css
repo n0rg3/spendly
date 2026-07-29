@@ -92,9 +92,11 @@ h2 { margin-bottom: 0; font-size: 19px; letter-spacing: -.25px; }
 }
 
 .expense-row:last-child { border-bottom: 0; }
-.expense-row div { display: grid; gap: 3px; }
+.expense-row .expense-info { display: grid; gap: 3px; }
+.expense-row .expense-amount { display: grid; gap: 2px; text-align: right; }
 .expense-row strong, .expense-row b { font-size: 15px; }
 .expense-row b { letter-spacing: -.2px; }
+.expense-row .expense-amount time { font-size: 11px; color: var(--hint-color); line-height: 1; }
 .expense-row:active { background: color-mix(in srgb, var(--text-color) 3%, transparent); }
 
 small { color: var(--hint-color); font-size: 12px; }

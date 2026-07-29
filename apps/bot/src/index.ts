@@ -3,6 +3,7 @@ import "./commands/start.js";
 import { db } from "@sp3ndly/database";
 import "./handlers/categories.js";
 import "./handlers/expenses.js";
+import "./handlers/text.js";
 const users = await db.user.findMany();
 
 console.log(users);

@@ -11,6 +11,13 @@ bot.command("start", async (ctx) => {
     return;
   }
 
-  const keyboard = new InlineKeyboard().webApp("Открыть Spendly", miniAppUrl);
-  await ctx.reply("👋 Добро пожаловать в Spendly!", { reply_markup: keyboard });
+  const keyboard = new InlineKeyboard().webApp("🚀 Открыть Spendly", miniAppUrl);
+  await ctx.reply(
+    "👋 Привет! Добро пожаловать в <b>Spendly</b> — твой личный трекер расходов.\n\n"
+    + "📊 Учитывай все траты по категориям\n"
+    + "📈 Смотри статистику и графики\n"
+    + "🎯 Копи на цели\n\n"
+    + "Нажми кнопку ниже, чтобы открыть мини-приложение 👇",
+    { reply_markup: keyboard, parse_mode: "HTML" },
+  );
 });

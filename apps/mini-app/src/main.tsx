@@ -187,14 +187,26 @@ function formatMoney(value: number) {
 }
 
 function ExpenseRow({ expense, onClick }: { expense: Expense; onClick: () => void }) {
+  const { date, time } = useMemo(() => {
+    const d = new Date(expense.createdAt);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return {
+      date: `${pad(d.getDate())}.${pad(d.getMonth() + 1)}`,
+      time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+    };
+  }, [expense.createdAt]);
+
   return (
     <button className="expense-row" onClick={onClick}>
       <span className="expense-icon">{expense.category?.icon ? <Icon name={expense.category.icon} /> : "•"}</span>
-      <div>
+      <div className="expense-info">
         <strong>{expense.description || expense.category?.name || "Расход"}</strong>
         <small>{expense.category?.name ?? "Без категории"}</small>
       </div>
-      <b>−{formatMoney(expense.amount)}</b>
+      <div className="expense-amount">
+        <b>−{formatMoney(expense.amount)}</b>
+        <time>{date} {time}</time>
+      </div>
     </button>
   );
 }
@@ -214,7 +226,7 @@ function App() {
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [categoryIconValue, setCategoryIconValue] = useState("other");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
-  const [expandedAccId, setExpandedAccId] = useState<Set<string>>(new Set(["all"]));
+  const [expandedAccId, setExpandedAccId] = useState<Set<string>>(new Set());
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
 
@@ -623,7 +635,7 @@ function App() {
 
           <div className="accordion-list">
             <div className="accordion-item">
-              <button className={`accordion-trigger ${expandedAccId.has("all") ? "active" : ""}`} onClick={() => toggleAccordion("all")}>
+              <button className={`accordion-trigger ${expandedAccId.has("all") ? "inactive" : ""}`} onClick={() => toggleAccordion("all")}>
                 <span>Все траты</span>
                 <div className="accordion-right">
                   <b>{formatMoney(filteredTotalSpent)}</b>
