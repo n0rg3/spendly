@@ -1,6 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyRequest } from "fastify";
-import { db } from "@sp3ndly/database";
+import { firestore } from "./firebase.js";
+
+type Category = { id: string; name: string; icon: string | null; color: string | null };
+type Expense = { id: string; amount: number; description: string | null; createdAt: string; category: Category | null };
+type Dashboard = { categories: Category[]; expenses: Expense[]; totalSpent: number; userCreatedAt: string };
 
 const configuredBotToken = process.env.BOT_TOKEN;
 const developmentUserId = process.env.DEV_TELEGRAM_USER_ID;
@@ -62,6 +66,30 @@ async function getTelegramUser(request: FastifyRequest): Promise<TelegramUser> {
   throw new Error("Telegram authorization is required");
 }
 
+const DEFAULT_DASHBOARD: Dashboard = {
+  categories: [
+    { id: "1", name: "Еда", icon: "food", color: "#3390ec" },
+    { id: "2", name: "Транспорт", icon: "transport", color: "#2cb074" },
+    { id: "3", name: "Покупки", icon: "shopping", color: "#f7a200" },
+  ],
+  expenses: [],
+  totalSpent: 0,
+  userCreatedAt: new Date().toISOString(),
+};
+
+async function getOrCreateDashboard(telegramId: string): Promise<{ id: string; telegramId: string } & Dashboard> {
+  const userDocRef = firestore.collection("users").doc(telegramId);
+  const docSnap = await userDocRef.get();
+
+  if (!docSnap.exists) {
+    await userDocRef.set(DEFAULT_DASHBOARD);
+    return { id: telegramId, telegramId, ...DEFAULT_DASHBOARD };
+  }
+
+  const data = docSnap.data() as Dashboard;
+  return { id: telegramId, telegramId, ...data };
+}
+
 const app = Fastify({ logger: true });
 
 app.get("/api/health", async () => ({ ok: true }));
@@ -71,11 +99,13 @@ app.addHook("preHandler", async (request, reply) => {
 
   try {
     const telegramUser = await getTelegramUser(request);
-    request.user = await db.user.upsert({
-      where: { telegramId: String(telegramUser.id) },
-      update: {},
-      create: { telegramId: String(telegramUser.id) },
-    });
+    const dashboard = await getOrCreateDashboard(String(telegramUser.id));
+    request.user = {
+      id: dashboard.id,
+      telegramId: dashboard.telegramId,
+      createdAt: new Date(dashboard.userCreatedAt),
+    };
+    request.dashboard = dashboard;
   } catch (error) {
     return reply.code(401).send({
       error: error instanceof Error ? error.message : "Unauthorized",
@@ -89,32 +119,27 @@ app.get<{ Querystring: { month?: string } }>("/api/dashboard", async (request, r
     return reply.code(400).send({ error: "Некорректный месяц" });
   }
 
-  const dateFilter = month
-    ? {
-        gte: new Date(`${month}-01T00:00:00`),
-        lt: new Date(new Date(`${month}-01T00:00:00`).setMonth(new Date(`${month}-01T00:00:00`).getMonth() + 1)),
-      }
-    : undefined;
-  const expenseWhere = { userId: request.user.id, ...(dateFilter ? { createdAt: dateFilter } : {}) };
-  const [categories, expenses, totals] = await Promise.all([
-    db.category.findMany({
-      where: { userId: request.user.id },
-      orderBy: { name: "asc" },
-    }),
-    db.expense.findMany({
-      where: expenseWhere,
-      include: { category: true },
-      orderBy: { createdAt: "desc" },
-      take: 100,
-    }),
-    db.expense.aggregate({ where: expenseWhere, _sum: { amount: true } }),
-  ]);
+  const dashboard = request.dashboard;
+
+  if (month) {
+    const filteredExpenses = dashboard.expenses.filter((e) => {
+      if (!e.createdAt) return false;
+      return e.createdAt.startsWith(month);
+    });
+
+    return {
+      categories: dashboard.categories,
+      expenses: filteredExpenses,
+      totalSpent: filteredExpenses.reduce((sum, e) => sum + e.amount, 0),
+      userCreatedAt: dashboard.userCreatedAt,
+    };
+  }
 
   return {
-    categories,
-    expenses,
-    totalSpent: totals._sum.amount ?? 0,
-    userCreatedAt: request.user.createdAt.toISOString(),
+    categories: dashboard.categories,
+    expenses: dashboard.expenses,
+    totalSpent: dashboard.totalSpent,
+    userCreatedAt: dashboard.userCreatedAt,
   };
 });
 
@@ -126,13 +151,24 @@ app.post<{ Body: { name?: string; color?: string } }>(
       return reply.code(400).send({ error: "Название категории: от 1 до 50 символов" });
     }
 
-    return db.category.create({
-      data: {
-        name,
-        color: request.body.color?.trim() || null,
-        userId: request.user.id,
-      },
-    });
+    const dashboard = request.dashboard;
+    const userDocRef = firestore.collection("users").doc(request.user.telegramId);
+
+    const newCategory: Category = {
+      id: String(Date.now()),
+      name,
+      icon: null,
+      color: request.body.color?.trim() || null,
+    };
+
+    const updated: Dashboard = {
+      ...dashboard,
+      categories: [...dashboard.categories, newCategory],
+    };
+
+    await userDocRef.set(updated);
+
+    return reply.code(201).send(newCategory);
   },
 );
 
@@ -144,27 +180,61 @@ app.patch<{ Params: { id: string }; Body: { name?: string; color?: string } }>(
       return reply.code(400).send({ error: "Название категории: от 1 до 50 символов" });
     }
 
-    const category = await db.category.findFirst({
-      where: { id: request.params.id, userId: request.user.id },
-    });
+    const dashboard = request.dashboard;
+    const category = dashboard.categories.find((c) => c.id === request.params.id);
     if (!category) return reply.code(404).send({ error: "Категория не найдена" });
 
-    return db.category.update({
-      where: { id: category.id },
-      data: { name, color: request.body.color?.trim() || null },
+    const userDocRef = firestore.collection("users").doc(request.user.telegramId);
+
+    const updatedCategories = dashboard.categories.map((c) =>
+      c.id === request.params.id
+        ? { ...c, name, color: request.body.color?.trim() || null }
+        : c
+    );
+
+    // Обновляем ссылку на категорию во всех привязанных тратах
+    const updatedExpenses = dashboard.expenses.map((e) => {
+      if (e.category?.id === request.params.id) {
+        return { ...e, category: { ...e.category, name, color: request.body.color?.trim() || null } };
+      }
+      return e;
     });
+
+    const updated: Dashboard = {
+      ...dashboard,
+      categories: updatedCategories,
+      expenses: updatedExpenses,
+    };
+
+    await userDocRef.set(updated);
+
+    return updatedCategories.find((c) => c.id === request.params.id);
   },
 );
 
 app.delete<{ Params: { id: string } }>(
   "/api/categories/:id",
   async (request, reply) => {
-    const category = await db.category.findFirst({
-      where: { id: request.params.id, userId: request.user.id },
-    });
+    const dashboard = request.dashboard;
+    const category = dashboard.categories.find((c) => c.id === request.params.id);
     if (!category) return reply.code(404).send({ error: "Категория не найдена" });
 
-    await db.category.delete({ where: { id: category.id } });
+    const userDocRef = firestore.collection("users").doc(request.user.telegramId);
+
+    const updatedCategories = dashboard.categories.filter((c) => c.id !== request.params.id);
+    // Убираем категорию из расходов
+    const updatedExpenses = dashboard.expenses.map((e) =>
+      e.category?.id === request.params.id ? { ...e, category: null } : e
+    );
+
+    const updated: Dashboard = {
+      ...dashboard,
+      categories: updatedCategories,
+      expenses: updatedExpenses,
+    };
+
+    await userDocRef.set(updated);
+
     return reply.code(204).send();
   },
 );
@@ -183,24 +253,36 @@ app.post<{ Body: { amount?: number; description?: string; categoryId?: string } 
       return reply.code(400).send({ error: "Описание не должно быть длиннее 300 символов" });
     }
 
+    const dashboard = request.dashboard;
+
+    let category: Category | null = null;
     if (categoryId) {
-      const category = await db.category.findFirst({
-        where: { id: categoryId, userId: request.user.id },
-      });
+      category = dashboard.categories.find((c) => c.id === categoryId) || null;
       if (!category) {
         return reply.code(400).send({ error: "Категория не найдена" });
       }
     }
 
-    return db.expense.create({
-      data: {
-        amount,
-        description: description || null,
-        categoryId: categoryId || null,
-        userId: request.user.id,
-      },
-      include: { category: true },
-    });
+    const userDocRef = firestore.collection("users").doc(request.user.telegramId);
+
+    const newExpense: Expense = {
+      id: String(Date.now()),
+      amount,
+      description: description || null,
+      createdAt: new Date().toISOString(),
+      category: category ? { id: category.id, name: category.name, icon: category.icon, color: category.color } : null,
+    };
+
+    const newExpenses = [newExpense, ...dashboard.expenses];
+    const updated: Dashboard = {
+      ...dashboard,
+      expenses: newExpenses,
+      totalSpent: newExpenses.reduce((sum, e) => sum + e.amount, 0),
+    };
+
+    await userDocRef.set(updated);
+
+    return reply.code(201).send(newExpense);
   },
 );
 
@@ -222,33 +304,49 @@ app.patch<{
     return reply.code(400).send({ error: "Укажите корректные дату и время" });
   }
 
-  const expense = await db.expense.findFirst({
-    where: { id: request.params.id, userId: request.user.id },
-  });
+  const dashboard = request.dashboard;
+  const expense = dashboard.expenses.find((e) => e.id === request.params.id);
   if (!expense) return reply.code(404).send({ error: "Трата не найдена" });
 
-  if (categoryId) {
-    const category = await db.category.findFirst({
-      where: { id: categoryId, userId: request.user.id },
-    });
-    if (!category) return reply.code(400).send({ error: "Категория не найдена" });
+  let category: Category | null = expense.category;
+  if (categoryId !== undefined) {
+    if (categoryId) {
+      category = dashboard.categories.find((c) => c.id === categoryId) || null;
+      if (!category) return reply.code(400).send({ error: "Категория не найдена" });
+    } else {
+      category = null;
+    }
   }
 
-  return db.expense.update({
-    where: { id: expense.id },
-    data: {
-      amount,
-      description: description || null,
-      categoryId: categoryId || null,
-      ...(createdAt ? { createdAt } : {}),
-    },
-    include: { category: true },
-  });
+  const userDocRef = firestore.collection("users").doc(request.user.telegramId);
+
+  const updatedExpenses = dashboard.expenses.map((e) =>
+    e.id === request.params.id
+      ? {
+          ...e,
+          amount,
+          description: description || null,
+          category: category ? { id: category.id, name: category.name, icon: category.icon, color: category.color } : null,
+          createdAt: createdAt ? createdAt.toISOString() : e.createdAt,
+        }
+      : e
+  );
+
+  const updated: Dashboard = {
+    ...dashboard,
+    expenses: updatedExpenses,
+    totalSpent: updatedExpenses.reduce((sum, e) => sum + e.amount, 0),
+  };
+
+  await userDocRef.set(updated);
+
+  return updatedExpenses.find((e) => e.id === request.params.id);
 });
 
 declare module "fastify" {
   interface FastifyRequest {
     user: { id: string; telegramId: string; createdAt: Date };
+    dashboard: Dashboard;
   }
 }
 

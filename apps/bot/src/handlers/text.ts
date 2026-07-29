@@ -1,11 +1,15 @@
 import { InlineKeyboard } from "grammy";
 import { bot } from "../bot.js";
-import { db } from "@sp3ndly/database";
+import { firestore } from "../firebase.js";
 import { getOrCreateUser } from "../utils/getOrCreateUser.js";
+
+type Category = { id: string; name: string; icon: string | null; color: string | null };
+type Expense = { id: string; amount: number; description: string | null; createdAt: string; category: Category | null };
+type Dashboard = { categories: Category[]; expenses: Expense[]; totalSpent: number; userCreatedAt: string };
 
 // Хранилище временных данных: telegramId -> { categoryName, amount, description }
 export const pendingExpenses = new Map<
-  string, 
+  string,
   { categoryName: string; amount: number; description?: string }
 >();
 
@@ -37,18 +41,26 @@ bot.on("message:text", async (ctx) => {
       ? parts.slice(1, -1).join(" ")
       : undefined;
 
-    const user = await getOrCreateUser(telegramId);
+    const userDocRef = firestore.collection("users").doc(telegramId);
+    const userSnap = await userDocRef.get();
 
-    // Поиск категории БЕЗ учета регистра (mode: "insensitive")
-    const category = await db.category.findFirst({
-      where: {
-        name: { equals: categoryName, mode: "insensitive" },
-        userId: user.id,
-      },
-    });
+    let dashboard: Dashboard;
+    if (!userSnap.exists) {
+      // Создаём нового пользователя через getOrCreateUser
+      await getOrCreateUser(telegramId);
+      const newSnap = await userDocRef.get();
+      dashboard = newSnap.data() as Dashboard;
+    } else {
+      dashboard = userSnap.data() as Dashboard;
+    }
+
+    // Поиск категории БЕЗ учета регистра
+    const category = dashboard.categories.find(
+      (c) => c.name.toLowerCase() === categoryName.toLowerCase()
+    );
 
     if (!category) {
-      // Сохраняем временные данные в Map, чтобы не превысить 64 байта в callback_data кнопки!
+      // Сохраняем временные данные в Map
       pendingExpenses.set(telegramId, { categoryName, amount, description });
 
       const createKeyboard = new InlineKeyboard()
@@ -62,20 +74,27 @@ bot.on("message:text", async (ctx) => {
     }
 
     // Сохраняем расход
-    await db.expense.create({
-      data: {
-        amount,
-        description,
-        categoryId: category.id,
-        userId: user.id,
-      },
-    });
+    const newExpense: Expense = {
+      id: String(Date.now()),
+      amount,
+      description: description ?? null,
+      createdAt: new Date().toISOString(),
+      category: { id: category.id, name: category.name, icon: category.icon, color: category.color },
+    };
+
+    const updatedExpenses = [newExpense, ...dashboard.expenses];
+    const updated: Dashboard = {
+      ...dashboard,
+      expenses: updatedExpenses,
+      totalSpent: updatedExpenses.reduce((sum, e) => sum + e.amount, 0),
+    };
+
+    await userDocRef.set(updated);
 
     const descStr = description ? ` (${description})` : "";
     return await ctx.reply(`✅ ${category.name}${descStr}: ${amount} 💸`);
-
   } catch (error) {
     console.error("Ошибка при обработке сообщения:", error);
     return await ctx.reply("⚠️ Ошибка при записи. Проверьте консоль.");
   }
-}); 
+});

@@ -9,9 +9,8 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@prisma/client": "^5.22.0",
-    "@sp3ndly/database": "workspace:*",
     "dotenv": "^17.4.2",
+    "firebase-admin": "^14.2.0",
     "grammy": "^1.44.0"
   },
   "devDependencies": {
