@@ -1,17 +1,14 @@
 import { bot } from "./bot.js";
 import "./commands/start.js";
-import { db } from "@sp3ndly/database";
 import "./handlers/categories.js";
 import "./handlers/expenses.js";
 import "./handlers/text.js";
-const users = await db.user.findMany();
 
-console.log(users);
+// Обработчик ошибок — бот не падает при проблемах с БД
+bot.catch((err) => {
+  console.error("Bot error:", err);
+});
+
 console.log("🤖 Spendly is running...");
 
-await bot.start();
-
-
-
-
-
+bot.start();

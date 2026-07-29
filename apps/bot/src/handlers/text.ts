@@ -13,6 +13,9 @@ bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
   const telegramId = String(fromId);
 
+  // Пропускаем команды (начинаются с /)
+  if (text.startsWith("/")) return;
+
   // Проверяем, не ждёт ли пользователь выбора категории
   const pending = pendingExpenses.get(telegramId);
   if (pending) {
@@ -33,19 +36,22 @@ bot.on("message:text", async (ctx) => {
     return; // невалидная сумма, игнорируем
   }
 
-  // Первая часть — категория
-  const categoryName = parts[0];
+  // Первая часть — категория (регистронезависимо)
+  const categoryName = parts[0]!.toLowerCase();
 
   // Всё между категорией и суммой — описание (если есть)
-  const description = parts.length > 2
+  const description = parts.length > 2 && parts.length >= 3
     ? parts.slice(1, -1).join(" ")
     : undefined;
 
   const user = await getOrCreateUser(telegramId);
 
-  // Ищем категорию пользователя
+  // Ищем категорию пользователя (регистронезависимо — категории хранятся в lowercase)
   const category = await db.category.findFirst({
-    where: { name: categoryName, userId: user.id },
+    where: {
+      name: categoryName,
+      userId: user.id,
+    },
   });
 
   if (!category) {
