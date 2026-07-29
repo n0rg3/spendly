@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import * as LucideIcons from "lucide-react";
 import { doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db } from "./firebase";
+import CalculatorKeyboard from "./CalculatorKeyboard";
 import "./styles.css";
 
 type Category = { id: string; name: string; icon: string | null; color: string | null };
@@ -227,6 +228,9 @@ function App() {
   const [categoryIconValue, setCategoryIconValue] = useState("other");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [expandedAccId, setExpandedAccId] = useState<Set<string>>(new Set());
+  const [showCalcKeyboard, setShowCalcKeyboard] = useState(false);
+  const [calcKeyboardValue, setCalcKeyboardValue] = useState(0);
+  const [calcKeyboardTarget, setCalcKeyboardTarget] = useState<"add" | "edit">("add");
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
 
@@ -615,7 +619,20 @@ function App() {
                     <b>Редактировать</b>
                     <button type="button" className="close-button" onClick={() => setEditingExpense(undefined)}>×</button>
                   </div>
-                  <input name="amount" type="number" min="1" step="1" defaultValue={editingExpense.amount} required autoFocus />
+                  <input type="hidden" name="amount" value={calcKeyboardTarget === "edit" ? calcKeyboardValue : editingExpense.amount} />
+                  <button
+                    type="button"
+                    className="calc-amount-trigger"
+                    onClick={() => {
+                      setCalcKeyboardValue(editingExpense.amount);
+                      setCalcKeyboardTarget("edit");
+                      setShowCalcKeyboard(true);
+                    }}
+                  >
+                    {(calcKeyboardTarget === "edit" ? calcKeyboardValue : editingExpense.amount) > 0
+                      ? `${(calcKeyboardTarget === "edit" ? calcKeyboardValue : editingExpense.amount).toLocaleString("ru-RU")} ₽`
+                      : "Сумма, ₽"}
+                  </button>
                   <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" />
                   <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""}>
                     <option value="">Без категории</option>
@@ -799,7 +816,20 @@ function App() {
           {expenseCategory && (
             <div className="modal-backdrop" onClick={() => setExpenseCategory(undefined)}>
               <form className="expense-modal" onSubmit={addExpense} onClick={(e) => e.stopPropagation()}>
-                <input name="amount" type="number" min="1" step="1" placeholder="Сумма, ₽" required autoFocus />
+                <input type="hidden" name="amount" value={calcKeyboardTarget === "add" ? calcKeyboardValue : 0} />
+                <button
+                  type="button"
+                  className="calc-amount-trigger"
+                  onClick={() => {
+                    setCalcKeyboardValue(0);
+                    setCalcKeyboardTarget("add");
+                    setShowCalcKeyboard(true);
+                  }}
+                >
+                  {calcKeyboardTarget === "add" && calcKeyboardValue > 0
+                    ? `${calcKeyboardValue.toLocaleString("ru-RU")} ₽`
+                    : "Сумма, ₽"}
+                </button>
                 <input name="description" maxLength={300} placeholder="Что купили?" />
                 <select name="categoryId" defaultValue={expenseCategory.id}>
                   {dashboard?.categories.map((category) => (
@@ -845,6 +875,14 @@ function App() {
             <button type="button">Добавить накопление</button>
           </section>
         </>
+      )}
+
+      {showCalcKeyboard && (
+        <CalculatorKeyboard
+          value={calcKeyboardValue}
+          onChange={(val) => setCalcKeyboardValue(val)}
+          onClose={() => setShowCalcKeyboard(false)}
+        />
       )}
 
       <nav aria-label="Основная навигация">
