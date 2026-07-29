@@ -8,6 +8,15 @@
   </head>
   <body>
     <div id="root"></div>
+
+    <!-- Вставляем инициализацию до main.tsx -->
+    <script>
+      if (window.Telegram && window.Telegram.WebApp) {
+        window.Telegram.WebApp.ready();
+        window.Telegram.WebApp.expand();
+      }
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

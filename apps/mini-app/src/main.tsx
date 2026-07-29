@@ -1,5 +1,6 @@
 import { StrictMode, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
+import * as LucideIcons from "lucide-react";
 import "./styles.css";
 
 type Category = { id: string; name: string; icon: string | null; color: string | null };
@@ -34,31 +35,62 @@ function formatMonth(value: string) {
     .format(new Date(year, month - 1, 1));
 }
 
-// Добавляем новые иконки для расширения набора категорий
-const CATEGORY_ICONS = [
-  "food",
-  "transport",
-  "shopping",
-  "ent",
-  "health",
-  "home",
-  "gift",
-  "other",
-  // новые иконки
-  "wallet",
-  "coffee",
-  "book",
-  "movie",
-  "music",
-  "phone",
-  // дополнительные иконки для достижения 20
-  "travel",
-  "sport",
-  "education",
-  "pet",
-  "beauty",
-  "clothing",
-];
+const ICON_MAP: Record<string, keyof typeof LucideIcons> = {
+  grid: "LayoutGrid",
+  card: "CreditCard",
+  chart: "PieChart",
+  goal: "Target",
+  plus: "Plus",
+  arrow: "ChevronRight",
+  food: "Utensils",
+  transport: "Car",
+  shopping: "ShoppingBag",
+  ent: "Ticket",
+  health: "HeartPulse",
+  home: "Home",
+  gift: "Gift",
+  wallet: "Wallet",
+  coffee: "Coffee",
+  book: "Book",
+  movie: "Film",
+  music: "Music",
+  phone: "Smartphone",
+  travel: "Plane",
+  sport: "Dumbbell",
+  education: "GraduationCap",
+  pet: "Dog",
+  beauty: "Sparkles",
+  clothing: "Shirt",
+  other: "Circle",
+  baby: "Baby",
+  bank: "Landmark",
+  beer: "Beer",
+  bike: "Bike",
+  bus: "Bus",
+  camera: "Camera",
+  clapper: "Clapperboard",
+  cloud: "Cloud",
+  coins: "Coins",
+  game: "Gamepad2",
+  gas: "Fuel",
+  glasses: "Glasses",
+  icecream: "IceCream",
+  lamp: "Lamp",
+  leaf: "Leaf",
+  paint: "Palette",
+  pizza: "Pizza",
+  receipt: "Receipt",
+  scissors: "Scissors",
+  tools: "Hammer",
+  train: "Train",
+  tv: "Tv",
+  umbrella: "Umbrella",
+  wine: "Wine",
+  wrench: "Wrench",
+};
+
+const CATEGORY_ICONS = Object.keys(ICON_MAP).filter((key) => !["grid", "card", "chart", "goal", "plus", "arrow"].includes(key));
+
 const ICON_LABELS: Record<string, string> = {
   food: "Еда",
   transport: "Транспорт",
@@ -67,8 +99,6 @@ const ICON_LABELS: Record<string, string> = {
   health: "Здоровье",
   home: "Дом",
   gift: "Подарки",
-  other: "Другое",
-  // новые метки
   wallet: "Кошелёк",
   coffee: "Кофе",
   book: "Книга",
@@ -78,33 +108,58 @@ const ICON_LABELS: Record<string, string> = {
   travel: "Путешествие",
   sport: "Спорт",
   education: "Образование",
-  pet: "Домашнее животное",
+  pet: "Питомец",
   beauty: "Красота",
   clothing: "Одежда",
+  other: "Другое",
+  baby: "Дети",
+  bank: "Банк",
+  beer: "Алкоголь",
+  bike: "Велосипед",
+  bus: "Автобус",
+  camera: "Фото",
+  clapper: "Видео",
+  cloud: "Облако",
+  coins: "Монеты",
+  game: "Игры",
+  gas: "Бензин",
+  glasses: "Зрение",
+  icecream: "Десерты",
+  lamp: "Свет",
+  leaf: "Природа",
+  paint: "Творчество",
+  pizza: "Пицца",
+  receipt: "Чеки",
+  scissors: "Услуги",
+  tools: "Инструменты",
+  train: "Поезд",
+  tv: "ТВ",
+  umbrella: "Зонт",
+  wine: "Вино",
+  wrench: "Ремонт",
 };
 
 function Icon({ name }: { name: string }) {
-  const paths: Record<string, React.ReactNode> = {
-    grid: <><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></>,
-    card: <><rect x="2.5" y="5" width="19" height="14" rx="3" /><path d="M3 10h18" /><path d="M6 15h4" /></>,
-    chart: <><path d="M20.5 13a8.5 8.5 0 1 1-9.5-9.4V13Z" /><path d="M14 2.5A8.5 8.5 0 0 1 21.5 10H14Z" /></>,
-    goal: <><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4.5" /><path d="m12 12 6-6" /></>,
-    plus: <><path d="M12 5v14M5 12h14" /></>,
-    arrow: <path d="m9 18 6-6-6-6" />,
-    food: <path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3" />,
-    transport: <><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-1.1 0-2 .9-2 2v7c0 .6.4 1 1 1h1" /><circle cx="7" cy="17" r="2" /><path d="M9 17h6" /><circle cx="17" cy="17" r="2" /></>,
-    shopping: <><path d="m6 2 2 4h12l-2 10H4L2 2h4z" /><circle cx="9" cy="20" r="2" /><circle cx="17" cy="20" r="2" /></>,
-    ent: <><path d="M21 15V6M3 6v15h12V6M3 10h12" /><path d="M9 21v-3" /></>,
-    health: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
-    home: <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
-    gift: <><rect x="3" y="8" width="18" height="4" /><path d="M12 5a3 3 0 1 0-5.94 1M12 5a3 3 0 1 1 5.94 1M12 5V2M12 8v14M3 12v10h18V12" /></>,
-    other: <circle cx="12" cy="12" r="10" />,
-  };
-  return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name] || paths.other}</svg>;
+  const iconName = ICON_MAP[name] || ICON_MAP.other;
+  const LucideIcon = (LucideIcons[iconName] as LucideIcons.LucideIcon) || LucideIcons.Circle;
+  return <LucideIcon size={22} strokeWidth={1.9} />;
 }
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(value);
+}
+
+function ExpenseRow({ expense, onClick }: { expense: Expense; onClick: () => void }) {
+  return (
+    <button className="expense-row" onClick={onClick}>
+      <span className="expense-icon">{expense.category?.icon ? <Icon name={expense.category.icon} /> : "•"}</span>
+      <div>
+        <strong>{expense.description || expense.category?.name || "Расход"}</strong>
+        <small>{expense.category?.name ?? "Без категории"}</small>
+      </div>
+      <b>−{formatMoney(expense.amount)}</b>
+    </button>
+  );
 }
 
 function App() {
@@ -122,6 +177,7 @@ function App() {
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [categoryIconValue, setCategoryIconValue] = useState("other");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
+  const [expandedAccId, setExpandedAccId] = useState<Set<string>>(new Set(["all"]));
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
 
@@ -162,7 +218,6 @@ function App() {
     const form = new FormData(formElement);
     const name = String(form.get("categoryName") ?? "");
     const icon = String(form.get("categoryIcon") ?? "other");
-    // Ensure icon uniqueness
     if (dashboard?.categories.some((c) => c.icon === icon)) {
       setError(`Иконка «${ICON_LABELS[icon] ?? icon}» уже используется`);
       return;
@@ -205,7 +260,6 @@ function App() {
     const form = new FormData(formElement);
     const name = String(form.get("categoryName") ?? "");
     const icon = String(form.get("categoryIcon") ?? "other");
-    // Ensure icon uniqueness excluding current category
     if (dashboard?.categories.some((c) => c.id !== editingCategory?.id && c.icon === icon)) {
       setError(`Иконка «${ICON_LABELS[icon] ?? icon}» уже используется`);
       return;
@@ -318,6 +372,24 @@ function App() {
     setShowMonthPicker(false);
   };
 
+  const groupedExpenses = useMemo(() => {
+    const grouped = new Map<string, Expense[]>();
+    dashboard?.expenses.forEach((ex) => {
+      const key = ex.category?.id ?? "other";
+      const group = grouped.get(key) ?? [];
+      group.push(ex);
+      grouped.set(key, group);
+    });
+    return grouped;
+  }, [dashboard]);
+
+  const toggleAccordion = (id: string) => {
+    const next = new Set(expandedAccId);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setExpandedAccId(next);
+  };
+
   return <main onClick={() => { setShowMonthPicker(false); setIconPickerOpen(false); }}>
     <header className="categories-header">
       {activeTab === "savings" ? (
@@ -363,26 +435,55 @@ function App() {
               </div>
             )}
           </div>
-
-<div className="month-total">
-  <small>Траты за {formatMonth(selectedMonth)}</small>
-  <b>{formatMoney(dashboard?.totalSpent ?? 0)}</b>
-</div>
-
+          <div className="month-total">
+            <small>Траты за {formatMonth(selectedMonth)}</small>
+            <b>{formatMoney(dashboard?.totalSpent ?? 0)}</b>
+          </div>
         </>
       )}
     </header>
     {error && <p className="notice">{error}</p>}
 
     {activeTab === "expenses" && <>
-      <div className="section-title"><h2>Последние траты</h2><button className="text-button" onClick={() => setShowExpenseForm(true)}>Добавить</button></div>
-      {showExpenseForm && <div className="modal-backdrop" onClick={() => setShowExpenseForm(false)}><form className="expense-modal" onSubmit={addExpense} onClick={(e) => e.stopPropagation()}><div className="form-heading"><span /><button type="button" className="close-button" onClick={() => setShowExpenseForm(false)}>×</button></div><input name="amount" type="number" min="1" step="1" placeholder="Сумма, ₽" required autoFocus /><input name="description" maxLength={300} placeholder="Что купили?" /><select name="categoryId" defaultValue=""><option value="">Без категории</option>{dashboard?.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select><button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button></form></div>}
+      <div className="section-title"><h2>Последние траты</h2></div>
       {editingExpense && (() => {
         const initialDateTime = toLocalDateTime(editingExpense.createdAt);
         return <div className="modal-backdrop" onClick={() => setEditingExpense(undefined)}><form className="expense-modal" onSubmit={updateExpense} onClick={(e) => e.stopPropagation()}><div className="form-heading"><b>Редактировать</b><button type="button" className="close-button" onClick={() => setEditingExpense(undefined)}>×</button></div><input name="amount" type="number" min="1" step="1" defaultValue={editingExpense.amount} required autoFocus /><input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" /><select name="categoryId" defaultValue={editingExpense.category?.id ?? ""}><option value="">Без категории</option>{dashboard?.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select><div className="date-time"><input name="date" type="date" defaultValue={initialDateTime.date} required /><input name="time" type="time" defaultValue={initialDateTime.time} required /></div><button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button></form></div>;
       })()}
-      <section className="list-card">{dashboard?.expenses.map((expense) => <button className="expense-row" key={expense.id} onClick={() => { setShowExpenseForm(false); setEditingExpense(expense); }}><span className="expense-icon">{expense.category?.icon ? <Icon name={expense.category.icon} /> : "•"}</span><div><strong>{expense.description || expense.category?.name || "Расход"}</strong><small>{expense.category?.name ?? "Без категории"}</small></div><b>−{formatMoney(expense.amount)}</b></button>)}{dashboard?.expenses.length === 0 && <p className="empty">Добавьте первую трату.</p>}</section>
-      <button className="floating-button" aria-label="Добавить трату" onClick={() => setShowExpenseForm(true)}><Icon name="plus" /></button>
+
+      <div className="accordion-list">
+        <div className="accordion-item">
+          <button className={`accordion-trigger ${expandedAccId.has("all") ? "active" : ""}`} onClick={() => toggleAccordion("all")}>
+            <span>Все траты</span>
+            <div className="accordion-right">
+              <b>{formatMoney(dashboard?.totalSpent ?? 0)}</b>
+              <Icon name="arrow" />
+            </div>
+          </button>
+          {expandedAccId.has("all") && <div className="accordion-content list-card">{dashboard?.expenses.map(ex => <ExpenseRow key={ex.id} expense={ex} onClick={() => setEditingExpense(ex)} />)}</div>}
+        </div>
+
+        {[...groupedExpenses.entries()].map(([catId, expenses]) => {
+          const category = expenses[0].category;
+          const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+          return (
+            <div className="accordion-item" key={catId}>
+              <button className={`accordion-trigger ${expandedAccId.has(catId) ? "active" : ""}`} onClick={() => toggleAccordion(catId)}>
+                <div className="accordion-left">
+                  <span className="mini-icon">{category?.icon ? <Icon name={category.icon} /> : "•"}</span>
+                  <span>{category?.name ?? "Без категории"}</span>
+                </div>
+                <div className="accordion-right">
+                  <b>{formatMoney(total)}</b>
+                  <Icon name="arrow" />
+                </div>
+              </button>
+              {expandedAccId.has(catId) && <div className="accordion-content list-card">{expenses.map(ex => <ExpenseRow key={ex.id} expense={ex} onClick={() => setEditingExpense(ex)} />)}</div>}
+            </div>
+          );
+        })}
+      </div>
+      {!dashboard?.expenses.length && <p className="empty">Добавьте первую трату.</p>}
     </>}
 
     {activeTab === "categories" && <>
@@ -457,7 +558,7 @@ function App() {
         </div>
       ) : null}
       <section className="category-icon-grid">{sortedCategories.map((category) => <button className="category-icon-button" key={category.id} onPointerDown={() => startCategoryPress(category)} onPointerUp={endCategoryPress} onPointerCancel={endCategoryPress} onContextMenu={(event) => event.preventDefault()} onClick={() => { if (didLongPress.current) { didLongPress.current = false; return; } setExpenseCategory(category); }}><span className="system-icon-bg"><Icon name={category.icon || "other"} /></span><b>{category.name}</b><small>{formatMoney(categoryStats.find((item) => item.id === category.id)?.amount ?? 0)}</small></button>)}<button className="category-icon-button add-category-button" onClick={() => { setEditingCategory(undefined); setCategoryIconValue("other"); setIconPickerOpen(false); setShowCategoryForm(true); }}><span><Icon name="plus" /></span><b>Добавить</b></button></section>
-      {expenseCategory && <div className="modal-backdrop" onClick={() => setExpenseCategory(undefined)}><form className="expense-modal" onSubmit={addExpense} onClick={(e) => e.stopPropagation()}><div className="form-heading"><span /><button type="button" className="close-button" onClick={() => setExpenseCategory(undefined)}>×</button></div><input type="hidden" name="categoryId" value={expenseCategory.id} /><input name="amount" type="number" min="1" step="1" placeholder="Сумма, ₽" required autoFocus /><input name="description" maxLength={300} placeholder="Что купили?" /><button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button></form></div>}
+      {expenseCategory && <div className="modal-backdrop" onClick={() => setExpenseCategory(undefined)}><form className="expense-modal" onSubmit={addExpense} onClick={(e) => e.stopPropagation()}><input name="amount" type="number" min="1" step="1" placeholder="Сумма, ₽" required autoFocus /><input name="description" maxLength={300} placeholder="Что купили?" /><select name="categoryId" defaultValue={expenseCategory.id}>{dashboard?.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select><button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button></form></div>}
     </>}
 
     {activeTab === "chart" && <>

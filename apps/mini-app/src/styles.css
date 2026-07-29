@@ -214,14 +214,16 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   line-height: 1;
 }
 
-input, select {
+input,
+select {
   width: 100%;
-  min-height: 48px;
+  height: 48px;
   border: 1px solid var(--border-color);
   border-radius: 13px;
   padding: 0 14px;
   outline: none;
   background: color-mix(in srgb, var(--text-color) 3%, transparent);
+  appearance: none;
 }
 
 input:focus, select:focus { border-color: var(--accent-color); }
@@ -291,7 +293,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
   padding: 12px;
   border: 1px solid var(--border-color);
   border-radius: 16px;
-  background: transparent;
+  background: var(--secondary-bg-color);
   box-shadow: 0 12px 30px color-mix(in srgb, var(--text-color) 15%, transparent);
   overflow-y: auto;
 }
@@ -304,11 +306,14 @@ input:focus, select:focus { border-color: var(--accent-color); }
   border-radius: 12px;
   color: var(--button-color);
   background: transparent;
+  transition: transform 0.1s ease;
 }
+
+.icon-dropdown-option:active { transform: scale(0.9); }
 
 .icon-dropdown-option.selected {
   color: var(--button-text-color, #ffffff);
-  background: transparent;
+  background: var(--button-color);
 }
 
 .modal-backdrop {
@@ -367,6 +372,20 @@ input:focus, select:focus { border-color: var(--accent-color); }
 .legend { display: grid; gap: 13px; }
 .legend > div { display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 9px; font-size: 14px; }
 .legend i { width: 10px; height: 10px; border-radius: 50%; }
+
+.accordion-list { display: grid; gap: 10px; }
+.accordion-item { overflow: hidden; border-radius: 18px; background: var(--secondary-bg-color); box-shadow: 0 4px 12px color-mix(in srgb, var(--text-color) 4%, transparent); }
+.accordion-trigger { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 16px; color: inherit; background: transparent; transition: background 0.2s ease; }
+.accordion-trigger:active { background: color-mix(in srgb, var(--text-color) 3%, transparent); }
+.accordion-left { display: flex; align-items: center; gap: 10px; }
+.accordion-right { display: flex; align-items: center; gap: 8px; }
+.accordion-trigger span { font-weight: 700; font-size: 15px; }
+.accordion-trigger .accordion-right b { font-size: 15px; }
+.accordion-trigger .accordion-right svg { width: 16px; height: 16px; color: var(--hint-color); transition: transform 0.2s ease; }
+.accordion-trigger.active .accordion-right svg { transform: rotate(90deg); }
+.accordion-content { border-top: 1px solid var(--border-color); border-radius: 0; box-shadow: none; }
+.mini-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; color: var(--button-color); background: color-mix(in srgb, var(--button-color) 12%, transparent); }
+.mini-icon svg { width: 15px; height: 15px; }
 
 .savings-card { padding: 30px 22px; text-align: center; }
 .savings-card h2 { margin: 12px 0 8px; }
