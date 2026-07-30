@@ -283,23 +283,70 @@ input:focus, select:focus { border-color: var(--accent-color); }
 .icon-dropdown-arrow svg { width: 14px; height: 14px; }
 
 .icon-dropdown-panel {
-  position: fixed;
+  position: absolute;
   z-index: 100;
-  inset: 16px;
-  margin: auto;
-  width: min(calc(100% - 32px), 480px);
-  height: fit-content;
-  max-height: 300px;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  padding: 20px;
+  gap: 8px;
+  max-height: 220px;
+  padding: 12px;
   border: 1px solid var(--border-color);
-  border-radius: 25px;
+  border-radius: 16px;
   background: var(--secondary-bg-color);
-  box-shadow: 0 15px 50px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.icon-dropdown {
+  position: relative;
+  overflow: visible;
+}
+
+.budget-icon-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  position: relative;
+}
+
+.budget-icon-row .calc-amount-display {
+  width: 75% !important;
+}
+
+.budget-icon-row .icon-dropdown {
+  width: 25% !important;
+  position: static;
+}
+
+.budget-icon-row .icon-dropdown-panel {
+  left: 0;
+  right: 0;
+  width: 100%;
+}
+
+/* При ширине 25% скрываем текстовый ярлык и стрелку внутри кнопки триггера */
+.budget-icon-row .icon-dropdown .icon-dropdown-trigger {
+  padding: 0;
+  justify-content: center;
+}
+
+.budget-icon-row .icon-dropdown .icon-dropdown-label,
+.budget-icon-row .icon-dropdown .icon-dropdown-arrow {
+  display: none;
+}
+
+.budget-icon-row .icon-dropdown .icon-dropdown-icon {
+  margin: 0;
+}
+
+.calc-amount-display.placeholder {
+  color: var(--hint-color);
+  opacity: 0.65;
 }
 
 .icon-dropdown-option {
@@ -313,15 +360,20 @@ input:focus, select:focus { border-color: var(--accent-color); }
   border-radius: 12px;
   color: var(--button-color);
   background: transparent;
-  transition: transform 0.1s ease;
+  transition: transform 0.1s ease, opacity 0.15s ease;
   padding: 0;
 }
 
-.icon-dropdown-option:active { transform: scale(0.9); }
+.icon-dropdown-option:active:not(:disabled) { transform: scale(0.9); }
 
 .icon-dropdown-option.selected {
   color: var(--button-text-color, #ffffff);
   background: var(--button-color);
+}
+
+.icon-dropdown-option:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 .modal-backdrop {
@@ -345,6 +397,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
   background: var(--secondary-bg-color);
   box-shadow: 0 20px 55px color-mix(in srgb, #000 25%, transparent);
   animation: modal-in .2s ease-out;
+  overflow: visible;
 }
 
 .expense-modal button {
@@ -383,12 +436,17 @@ input:focus, select:focus { border-color: var(--accent-color); }
   text-align: left;
 }
 
-.expense-modal--plain .calc-amount-display,
-.expense-modal--plain button[type="submit"],
-.expense-modal--plain button.danger-button {
+.expense-modal--plain .calc-amount-display {
   font-weight: 400;
   text-align: left;
   justify-content: flex-start;
+}
+
+.expense-modal--plain button[type="submit"],
+.expense-modal--plain button.danger-button {
+  font-weight: 400;
+  text-align: center;
+  justify-content: center;
 }
 @keyframes modal-in { from { transform: translateY(18px); opacity: .4; } to { transform: translateY(0); opacity: 1; } }
 

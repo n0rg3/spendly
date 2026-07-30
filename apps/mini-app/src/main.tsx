@@ -341,10 +341,6 @@ function App() {
     const name = String(form.get("categoryName") ?? "").trim();
     const icon = String(form.get("categoryIcon") ?? "other");
 
-    if (dashboard?.categories.some((c) => c.icon === icon)) {
-      setError(`Иконка «${ICON_LABELS[icon] ?? icon}» уже используется`);
-      return;
-    }
     if (!name || !dashboard) return;
 
     setIsSubmitting(true);
@@ -420,10 +416,6 @@ function App() {
     const icon = String(form.get("categoryIcon") ?? "other");
     const budgetAmount = Number(form.get("budget") ?? 0);
 
-    if (dashboard.categories.some((c) => c.id !== editingCategory.id && c.icon === icon)) {
-      setError(`Иконка «${ICON_LABELS[icon] ?? icon}» уже используется`);
-      return;
-    }
     if (!name) return;
 
     setIsSubmitting(true);
@@ -817,51 +809,46 @@ function App() {
               <form className="expense-modal expense-modal--plain" onSubmit={updateCategory} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
                 <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Название" required autoFocus onFocus={() => setCalcKeyboardOpen(false)} />
                 
-                <input type="hidden" name="budget" value={calcKeyboardTarget === "category" ? (isNaN(evaluateExpression(amountExpression)) ? 0 : evaluateExpression(amountExpression)) : (editingCategory.budgets?.[selectedMonth] || 0)} />
-                <button
-                  type="button"
-                  className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "category" ? "focused" : ""}`}
-                  onClick={() => {
-                    if (calcKeyboardTarget !== "category") {
-                      setAmountExpression(String(editingCategory.budgets?.[selectedMonth] || ""));
-                      setCalcKeyboardTarget("category");
-                    }
-                    setCalcKeyboardOpen(true);
-                  }}
-                >
-                  {(calcKeyboardTarget === "category" ? amountExpression : String(editingCategory.budgets?.[selectedMonth] || "")) || "Бюджет на месяц, ₽"}
-                </button>
-
-                <div className="icon-dropdown">
-                  <input type="hidden" name="categoryIcon" value={categoryIconValue} />
-                  <button type="button" className="icon-dropdown-trigger" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
-                    <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
-                    <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Другое"}</span>
-                    <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
+                <div className="budget-icon-row">
+                  <input type="hidden" name="budget" value={calcKeyboardTarget === "category" ? (isNaN(evaluateExpression(amountExpression)) ? 0 : evaluateExpression(amountExpression)) : (editingCategory.budgets?.[selectedMonth] || 0)} />
+                  <button
+                    type="button"
+                    className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "category" ? "focused" : ""} ${!(calcKeyboardTarget === "category" ? amountExpression : String(editingCategory.budgets?.[selectedMonth] || "")) ? "placeholder" : ""}`}
+                    onClick={() => {
+                      if (calcKeyboardTarget !== "category") {
+                        setAmountExpression(String(editingCategory.budgets?.[selectedMonth] || ""));
+                        setCalcKeyboardTarget("category");
+                      }
+                      setCalcKeyboardOpen(true);
+                    }}
+                  >
+                    {(calcKeyboardTarget === "category" ? amountExpression : String(editingCategory.budgets?.[selectedMonth] || "")) || "Бюджет на месяц, ₽"}
                   </button>
-                  {iconPickerOpen && (
-                    <div className="icon-dropdown-panel" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                      {CATEGORY_ICONS.map((icon) => {
-                        const used = dashboard?.categories.some((c) => c.icon === icon && c.id !== editingCategory?.id);
-                        return (
-                          <button
-                            type="button"
-                            key={icon}
-                            className={`icon-dropdown-option${categoryIconValue === icon ? " selected" : ""}`}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setCategoryIconValue(icon);
-                              setIconPickerOpen(false);
-                            }}
-                            disabled={used}
-                          >
-                            <Icon name={icon} />
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
+
+                  <div className="icon-dropdown">
+                    <input type="hidden" name="categoryIcon" value={categoryIconValue} />
+                    <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
+                      <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
+                      <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Другое"}</span>
+                      <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
+                    </button>
+                    {iconPickerOpen && (
+                      <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
+                        {CATEGORY_ICONS.map((icon) => {
+                          return (
+                            <button
+                              type="button"
+                              key={icon}
+                              className={`icon-dropdown-option${categoryIconValue === icon ? " selected" : ""}`}
+                              onClick={() => { setCategoryIconValue(icon); setIconPickerOpen(false); }}
+                            >
+                              <Icon name={icon} />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
                 <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteCategory}>Удалить</button>
@@ -877,27 +864,20 @@ function App() {
                 <input name="categoryName" maxLength={50} placeholder="Название" required autoFocus />
                 <div className="icon-dropdown">
                   <input type="hidden" name="categoryIcon" value={categoryIconValue} />
-                  <button type="button" className="icon-dropdown-trigger" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
+                  <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
                     <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
                     <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Другое"}</span>
                     <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                   </button>
                   {iconPickerOpen && (
-                    <div className="icon-dropdown-panel" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+                    <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
                       {CATEGORY_ICONS.map((icon) => {
-                        const used = dashboard?.categories.some((c) => c.icon === icon);
                         return (
                           <button
                             type="button"
                             key={icon}
                             className={`icon-dropdown-option${categoryIconValue === icon ? " selected" : ""}`}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setCategoryIconValue(icon);
-                              setIconPickerOpen(false);
-                            }}
-                            disabled={used}
+                            onClick={() => { setCategoryIconValue(icon); setIconPickerOpen(false); }}
                           >
                             <Icon name={icon} />
                           </button>
