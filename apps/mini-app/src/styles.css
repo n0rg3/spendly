@@ -283,32 +283,38 @@ input:focus, select:focus { border-color: var(--accent-color); }
 .icon-dropdown-arrow svg { width: 14px; height: 14px; }
 
 .icon-dropdown-panel {
-  position: absolute;
-  z-index: 15;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
+  position: fixed;
+  z-index: 100;
+  inset: 16px;
+  margin: auto;
+  width: min(calc(100% - 32px), 480px);
+  height: fit-content;
+  max-height: 300px;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  max-height: 220px;
-  padding: 12px;
+  gap: 12px;
+  padding: 20px;
   border: 1px solid var(--border-color);
-  border-radius: 16px;
+  border-radius: 25px;
   background: var(--secondary-bg-color);
-  box-shadow: 0 12px 30px color-mix(in srgb, var(--text-color) 15%, transparent);
+  box-shadow: 0 15px 50px rgba(0, 0, 0, 0.3);
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .icon-dropdown-option {
-  display: grid;
-  place-items: center;
+  position: relative;
+  z-index: 51;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   aspect-ratio: 1;
   border-radius: 12px;
   color: var(--button-color);
   background: transparent;
   transition: transform 0.1s ease;
+  padding: 0;
 }
 
 .icon-dropdown-option:active { transform: scale(0.9); }
@@ -377,7 +383,9 @@ input:focus, select:focus { border-color: var(--accent-color); }
   text-align: left;
 }
 
-.expense-modal--plain button {
+.expense-modal--plain .calc-amount-display,
+.expense-modal--plain button[type="submit"],
+.expense-modal--plain button.danger-button {
   font-weight: 400;
   text-align: left;
   justify-content: flex-start;

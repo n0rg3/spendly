@@ -7,7 +7,13 @@ import { db } from "./firebase";
 import CalculatorKeyboard from "./CalculatorKeyboard";
 import "./styles.css";
 
-type Category = { id: string; name: string; icon: string | null; color: string | null };
+type Category = { 
+  id: string; 
+  name: string; 
+  icon: string | null; 
+  color: string | null;
+  budgets?: Record<string, number>; // { "2026-07": 5000 }
+};
 type Expense = { id: string; amount: number; description: string | null; createdAt: string; category: Category | null };
 type Dashboard = { categories: Category[]; expenses: Expense[]; totalSpent: number; userCreatedAt: string };
 type Tab = "categories" | "expenses" | "chart" | "savings";
@@ -248,7 +254,7 @@ function App() {
   const [expandedAccId, setExpandedAccId] = useState<Set<string>>(new Set());
   const [calcKeyboardOpen, setCalcKeyboardOpen] = useState(false);
   const [amountExpression, setAmountExpression] = useState("");
-  const [calcKeyboardTarget, setCalcKeyboardTarget] = useState<"add" | "edit">("add");
+  const [calcKeyboardTarget, setCalcKeyboardTarget] = useState<"add" | "edit" | "category">("add");
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
 
@@ -353,6 +359,8 @@ function App() {
       await saveToFirebase(updated);
       formElement.reset();
       setShowCategoryForm(false);
+      setAmountExpression("");
+      setCalcKeyboardOpen(false);
     } catch {
       setError("Не удалось создать категорию");
     } finally {
@@ -410,6 +418,7 @@ function App() {
     const form = new FormData(formElement);
     const name = String(form.get("categoryName") ?? "").trim();
     const icon = String(form.get("categoryIcon") ?? "other");
+    const budgetAmount = Number(form.get("budget") ?? 0);
 
     if (dashboard.categories.some((c) => c.id !== editingCategory.id && c.icon === icon)) {
       setError(`Иконка «${ICON_LABELS[icon] ?? icon}» уже используется`);
@@ -420,20 +429,29 @@ function App() {
     setIsSubmitting(true);
     setError(undefined);
     try {
+      const budgets = { ...(editingCategory.budgets || {}) };
+      if (budgetAmount > 0) {
+        budgets[selectedMonth] = budgetAmount;
+      } else {
+        delete budgets[selectedMonth];
+      }
+
       const updatedCategories = dashboard.categories.map((c) =>
-        c.id === editingCategory.id ? { ...c, name, icon } : c
+        c.id === editingCategory.id ? { ...c, name, icon, budgets } : c
       );
 
       // Обновляем ссылку на категорию во всех привязанных тратах
       const updatedExpenses = dashboard.expenses.map((e) => {
         if (e.category?.id === editingCategory.id) {
-          return { ...e, category: { ...e.category, name, icon } };
+          return { ...e, category: { ...e.category, name, icon, budgets } };
         }
         return e;
       });
 
       await saveToFirebase({ ...dashboard, categories: updatedCategories, expenses: updatedExpenses });
       setEditingCategory(undefined);
+      setAmountExpression("");
+      setCalcKeyboardOpen(false);
     } catch {
       setError("Не удалось изменить категорию");
     } finally {
@@ -694,7 +712,7 @@ function App() {
             return (
               <div 
                 className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} 
-                onClick={(e) => {
+                onMouseDown={(e) => {
                   if (e.target === e.currentTarget) {
                     setEditingExpense(undefined);
                     setCalcKeyboardOpen(false);
@@ -702,7 +720,7 @@ function App() {
                   }
                 }}
               >
-                <form className="expense-modal" onSubmit={updateExpense} onClick={(e) => e.stopPropagation()}>
+                <form className="expense-modal" onSubmit={updateExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
                   <input type="hidden" name="amount" value={isNaN(evaluatedAmount) ? 0 : evaluatedAmount} />
                   <button
                     type="button"
@@ -786,22 +804,43 @@ function App() {
       {activeTab === "categories" && (
         <>
           {editingCategory ? (
-            <div className="modal-backdrop" onClick={() => setEditingCategory(undefined)}>
-              <form className="expense-modal" onSubmit={updateCategory} onClick={(e) => e.stopPropagation()}>
-                <div className="form-heading">
-                  <b>Редактировать</b>
-                  <button type="button" className="close-button" onClick={() => setEditingCategory(undefined)}>×</button>
-                </div>
-                <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Название" required autoFocus />
+            <div 
+              className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} 
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) {
+                  setEditingCategory(undefined);
+                  setCalcKeyboardOpen(false);
+                  setAmountExpression("");
+                }
+              }}
+            >
+              <form className="expense-modal expense-modal--plain" onSubmit={updateCategory} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+                <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Название" required autoFocus onFocus={() => setCalcKeyboardOpen(false)} />
+                
+                <input type="hidden" name="budget" value={calcKeyboardTarget === "category" ? (isNaN(evaluateExpression(amountExpression)) ? 0 : evaluateExpression(amountExpression)) : (editingCategory.budgets?.[selectedMonth] || 0)} />
+                <button
+                  type="button"
+                  className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "category" ? "focused" : ""}`}
+                  onClick={() => {
+                    if (calcKeyboardTarget !== "category") {
+                      setAmountExpression(String(editingCategory.budgets?.[selectedMonth] || ""));
+                      setCalcKeyboardTarget("category");
+                    }
+                    setCalcKeyboardOpen(true);
+                  }}
+                >
+                  {(calcKeyboardTarget === "category" ? amountExpression : String(editingCategory.budgets?.[selectedMonth] || "")) || "Бюджет на месяц, ₽"}
+                </button>
+
                 <div className="icon-dropdown">
                   <input type="hidden" name="categoryIcon" value={categoryIconValue} />
-                  <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
+                  <button type="button" className="icon-dropdown-trigger" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
                     <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
                     <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Другое"}</span>
                     <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                   </button>
                   {iconPickerOpen && (
-                    <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
+                    <div className="icon-dropdown-panel" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
                       {CATEGORY_ICONS.map((icon) => {
                         const used = dashboard?.categories.some((c) => c.icon === icon && c.id !== editingCategory?.id);
                         return (
@@ -809,7 +848,12 @@ function App() {
                             type="button"
                             key={icon}
                             className={`icon-dropdown-option${categoryIconValue === icon ? " selected" : ""}`}
-                            onClick={() => { setCategoryIconValue(icon); setIconPickerOpen(false); }}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setCategoryIconValue(icon);
+                              setIconPickerOpen(false);
+                            }}
                             disabled={used}
                           >
                             <Icon name={icon} />
@@ -833,13 +877,13 @@ function App() {
                 <input name="categoryName" maxLength={50} placeholder="Название" required autoFocus />
                 <div className="icon-dropdown">
                   <input type="hidden" name="categoryIcon" value={categoryIconValue} />
-                  <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
+                  <button type="button" className="icon-dropdown-trigger" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
                     <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
                     <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Другое"}</span>
                     <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                   </button>
                   {iconPickerOpen && (
-                    <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
+                    <div className="icon-dropdown-panel" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
                       {CATEGORY_ICONS.map((icon) => {
                         const used = dashboard?.categories.some((c) => c.icon === icon);
                         return (
@@ -847,7 +891,12 @@ function App() {
                             type="button"
                             key={icon}
                             className={`icon-dropdown-option${categoryIconValue === icon ? " selected" : ""}`}
-                            onClick={() => { setCategoryIconValue(icon); setIconPickerOpen(false); }}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setCategoryIconValue(icon);
+                              setIconPickerOpen(false);
+                            }}
                             disabled={used}
                           >
                             <Icon name={icon} />
@@ -857,7 +906,7 @@ function App() {
                     </div>
                   )}
                 </div>
-                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Создать"}</button>
+                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Создать" : "Создать"}</button>
               </form>
             </div>
           ) : null}
@@ -881,7 +930,12 @@ function App() {
               >
                 <span className="system-icon-bg"><Icon name={category.icon || "other"} /></span>
                 <b>{category.name}</b>
-                <small>{formatMoney(categoryStats.find((item) => item.id === category.id)?.amount ?? 0)}</small>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
+                  <small>{formatMoney(categoryStats.find((item) => item.id === category.id)?.amount ?? 0)}</small>
+                  {category.budgets?.[selectedMonth] && (
+                    <small style={{ fontSize: '9px', opacity: 0.8 }}>из {formatMoney(category.budgets[selectedMonth])}</small>
+                  )}
+                </div>
               </button>
             ))}
             <button
@@ -901,7 +955,7 @@ function App() {
           {expenseCategory && (
             <div 
               className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} 
-              onClick={(e) => {
+              onMouseDown={(e) => {
                 if (e.target === e.currentTarget) {
                   setExpenseCategory(undefined);
                   setCalcKeyboardOpen(false);
@@ -909,7 +963,7 @@ function App() {
                 }
               }}
             >
-              <form className="expense-modal expense-modal--plain" onSubmit={addExpense} onClick={(e) => e.stopPropagation()}>
+              <form className="expense-modal expense-modal--plain" onSubmit={addExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
                 <input type="hidden" name="amount" value={calcKeyboardTarget === "add" ? (isNaN(evaluateExpression(amountExpression)) ? 0 : evaluateExpression(amountExpression)) : 0} />
                 <input type="hidden" name="categoryId" value={expenseCategory.id} />
                 <button
@@ -967,7 +1021,7 @@ function App() {
         </>
       )}
 
-      {calcKeyboardOpen && (editingExpense || expenseCategory) && (
+      {calcKeyboardOpen && (editingExpense || expenseCategory || editingCategory) && (
         <CalculatorKeyboard
           onInput={handleCalcInput}
           onBackspace={handleCalcBackspace}
