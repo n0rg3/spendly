@@ -364,6 +364,24 @@ input:focus, select:focus { border-color: var(--accent-color); }
 }
 
 .expense-modal .form-heading b { display: block; margin-top: 2px; font-size: 19px; }
+
+/* ===== Plain modal (без заголовка, единый стиль текста) ===== */
+.expense-modal--plain input,
+.expense-modal--plain select {
+  font-weight: 400;
+  text-align: left;
+}
+
+.expense-modal--plain .calc-amount-display {
+  font-weight: 400;
+  text-align: left;
+}
+
+.expense-modal--plain button {
+  font-weight: 400;
+  text-align: left;
+  justify-content: flex-start;
+}
 @keyframes modal-in { from { transform: translateY(18px); opacity: .4; } to { transform: translateY(0); opacity: 1; } }
 
 .chart-card { padding: 22px; }

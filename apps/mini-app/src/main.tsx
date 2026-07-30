@@ -187,7 +187,7 @@ function formatMoney(value: number) {
   return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(value);
 }
 
-function ExpenseRow({ expense, onClick }: { expense: Expense; onClick: () => void }) {
+function ExpenseRow({ expense, onLongPress }: { expense: Expense; onLongPress: () => void }) {
   const { date, time } = useMemo(() => {
     const d = new Date(expense.createdAt);
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -197,8 +197,26 @@ function ExpenseRow({ expense, onClick }: { expense: Expense; onClick: () => voi
     };
   }, [expense.createdAt]);
 
+  const pressTimer = useRef<number | undefined>(undefined);
+
+  const startPress = () => {
+    pressTimer.current = window.setTimeout(() => {
+      onLongPress();
+    }, 650);
+  };
+
+  const endPress = () => {
+    if (pressTimer.current) window.clearTimeout(pressTimer.current);
+  };
+
   return (
-    <button className="expense-row" onClick={onClick}>
+    <button
+      className="expense-row"
+      onPointerDown={startPress}
+      onPointerUp={endPress}
+      onPointerCancel={endPress}
+      onContextMenu={(e) => e.preventDefault()}
+    >
       <span className="expense-icon">{expense.category?.icon ? <Icon name={expense.category.icon} /> : "•"}</span>
       <div className="expense-info">
         <strong>{expense.description || expense.category?.name || "Расход"}</strong>
@@ -487,6 +505,29 @@ function App() {
     }
   };
 
+  const deleteExpense = async () => {
+    if (!editingExpense || !dashboard || !window.confirm("Удалить трату?")) return;
+
+    setIsSubmitting(true);
+    setError(undefined);
+    try {
+      const updatedExpenses = dashboard.expenses.filter((e) => e.id !== editingExpense.id);
+
+      await saveToFirebase({
+        ...dashboard,
+        expenses: updatedExpenses,
+        totalSpent: updatedExpenses.reduce((sum, e) => sum + e.amount, 0),
+      });
+      setEditingExpense(undefined);
+      setAmountExpression("");
+      setCalcKeyboardOpen(false);
+    } catch {
+      setError("Не удалось удалить трату");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const startCategoryPress = (category: Category) => {
     didLongPress.current = false;
     categoryPressTimer.current = window.setTimeout(() => {
@@ -651,12 +692,17 @@ function App() {
             const currentAmount = calcKeyboardTarget === "edit" ? amountExpression : String(editingExpense.amount);
             const evaluatedAmount = evaluateExpression(currentAmount);
             return (
-              <div className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} onClick={() => { setEditingExpense(undefined); setCalcKeyboardOpen(false); setAmountExpression(""); }}>
+              <div 
+                className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} 
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) {
+                    setEditingExpense(undefined);
+                    setCalcKeyboardOpen(false);
+                    setAmountExpression("");
+                  }
+                }}
+              >
                 <form className="expense-modal" onSubmit={updateExpense} onClick={(e) => e.stopPropagation()}>
-                  <div className="form-heading">
-                    <b>Редактировать</b>
-                    <button type="button" className="close-button" onClick={() => { setEditingExpense(undefined); setCalcKeyboardOpen(false); setAmountExpression(""); }}>×</button>
-                  </div>
                   <input type="hidden" name="amount" value={isNaN(evaluatedAmount) ? 0 : evaluatedAmount} />
                   <button
                     type="button"
@@ -683,6 +729,7 @@ function App() {
                     <input name="time" type="time" defaultValue={initialDateTime.time} required onFocus={() => setCalcKeyboardOpen(false)} />
                   </div>
                   <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
+                  <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteExpense}>Удалить</button>
                 </form>
               </div>
             );
@@ -700,7 +747,7 @@ function App() {
               {expandedAccId.has("all") && (
                 <div className="accordion-content list-card">
                   {filteredExpenses.map((ex) => (
-                    <ExpenseRow key={ex.id} expense={ex} onClick={() => setEditingExpense(ex)} />
+                    <ExpenseRow key={ex.id} expense={ex} onLongPress={() => setEditingExpense(ex)} />
                   ))}
                 </div>
               )}
@@ -724,7 +771,7 @@ function App() {
                   {expandedAccId.has(catId) && (
                     <div className="accordion-content list-card">
                       {expenses.map((ex) => (
-                        <ExpenseRow key={ex.id} expense={ex} onClick={() => setEditingExpense(ex)} />
+                        <ExpenseRow key={ex.id} expense={ex} onLongPress={() => setEditingExpense(ex)} />
                       ))}
                     </div>
                   )}
@@ -852,13 +899,19 @@ function App() {
           </section>
 
           {expenseCategory && (
-            <div className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} onClick={() => { setExpenseCategory(undefined); setCalcKeyboardOpen(false); setAmountExpression(""); }}>
-              <form className="expense-modal" onSubmit={addExpense} onClick={(e) => e.stopPropagation()}>
-                <div className="form-heading">
-                  <b>Новая трата</b>
-                  <button type="button" className="close-button" onClick={() => { setExpenseCategory(undefined); setCalcKeyboardOpen(false); setAmountExpression(""); }}>×</button>
-                </div>
+            <div 
+              className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} 
+              onClick={(e) => {
+                if (e.target === e.currentTarget) {
+                  setExpenseCategory(undefined);
+                  setCalcKeyboardOpen(false);
+                  setAmountExpression("");
+                }
+              }}
+            >
+              <form className="expense-modal expense-modal--plain" onSubmit={addExpense} onClick={(e) => e.stopPropagation()}>
                 <input type="hidden" name="amount" value={calcKeyboardTarget === "add" ? (isNaN(evaluateExpression(amountExpression)) ? 0 : evaluateExpression(amountExpression)) : 0} />
+                <input type="hidden" name="categoryId" value={expenseCategory.id} />
                 <button
                   type="button"
                   className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "add" ? "focused" : ""}`}
@@ -873,11 +926,6 @@ function App() {
                   {calcKeyboardTarget === "add" ? (amountExpression || "Сумма, ₽") : "Сумма, ₽"}
                 </button>
                 <input name="description" maxLength={300} placeholder="Что купили?" onFocus={() => setCalcKeyboardOpen(false)} />
-                <select name="categoryId" defaultValue={expenseCategory.id} onFocus={() => setCalcKeyboardOpen(false)}>
-                  {dashboard?.categories.map((category) => (
-                    <option key={category.id} value={category.id}>{category.name}</option>
-                  ))}
-                </select>
                 <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
               </form>
             </div>
