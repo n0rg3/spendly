@@ -16,7 +16,7 @@
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", Inter, sans-serif;
 }
 
-*, *::before, *::after { box-sizing: border-box; transition: none !important; animation: none !important; }
+*, *::before, *::after { box-sizing: border-box; transition: none !important; }
 
 /* ===== Фиксация viewport от сдвигов клавиатуры ===== */
 html, body {
@@ -51,6 +51,11 @@ main {
   padding: 26px 18px calc(108px + env(safe-area-inset-bottom));
   overflow-y: auto; /* Внутренний скролл только для контента */
   -webkit-overflow-scrolling: touch;
+}
+
+main.modal-open {
+  overflow: hidden; /* Блокируем скролл контента при открытом модальном окне */
+  touch-action: none;
 }
 
 header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
@@ -425,6 +430,26 @@ input:focus, select:focus { border-color: var(--accent-color); }
   cursor: not-allowed;
 }
 
+@keyframes backdropFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(100px); /* Стартовая позиция ниже на 100px */
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-100px);    /* Финальная позиция */
+  }
+}
+
 .modal-backdrop {
   position: fixed;
   z-index: 20;
@@ -433,7 +458,8 @@ input:focus, select:focus { border-color: var(--accent-color); }
   align-items: end;
   padding: 16px 16px calc(18px + env(safe-area-inset-bottom));
   background: color-mix(in srgb, #191d2b 35%, transparent);
-  transition: none;
+  opacity: 0;
+  animation: backdropFadeIn 0.3s ease-out .2s forwards;
 }
 
 .expense-modal {
@@ -446,7 +472,8 @@ input:focus, select:focus { border-color: var(--accent-color); }
   background: var(--secondary-bg-color);
   box-shadow: 0 20px 55px color-mix(in srgb, #000 25%, transparent);
   overflow: visible;
-  transition: none;
+  opacity: 0;
+  animation: modalSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) .2s forwards;
 }
 
 .expense-modal button {

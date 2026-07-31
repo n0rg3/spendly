@@ -646,8 +646,10 @@ function App() {
     setExpandedAccId(next);
   };
 
+  const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory;
+
   return (
-    <main onClick={() => { setShowMonthPicker(false); setIconPickerOpen(false); }}>
+    <main className={isModalOpen ? "modal-open" : ""} onClick={() => { setShowMonthPicker(false); setIconPickerOpen(false); }}>
       <header className="categories-header">
         {activeTab === "savings" ? (
           <>
