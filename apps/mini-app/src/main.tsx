@@ -716,13 +716,8 @@ function App() {
                 }}
               >
                 <form className="expense-modal expense-modal--plain" onSubmit={updateExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                  <input name="amount" type="text" inputMode="numeric" defaultValue={String(editingExpense.amount)} placeholder="Сумма" required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
-                  <div className="operator-bar">
-                    {["+", "-", "*", "/"].map((op) => (
-                      <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
-                    ))}
-                  </div>
-                  <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" />
+                  <input name="amount" type="text" inputMode="numeric" defaultValue={String(editingExpense.amount)} placeholder="Amount" required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Description" />
                   <div className="select-wrapper">
                     <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""}>
                       <option value="">Без категории</option>
@@ -735,8 +730,10 @@ function App() {
                     <input name="date" type="date" defaultValue={initialDateTime.date} required />
                     <input name="time" type="time" defaultValue={initialDateTime.time} required />
                   </div>
-                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
-                  <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteExpense}>Удалить</button>
+                  <div className="button-row">
+                    <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Save"}</button>
+                    <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteExpense}>Delete</button>
+                  </div>
                 </form>
               </div>
             );
@@ -745,7 +742,7 @@ function App() {
           <div className="accordion-list">
             <div className="accordion-item">
               <button className={`accordion-trigger ${expandedAccId.has("all") ? "inactive" : ""}`} onClick={() => toggleAccordion("all")}>
-                <span>Все траты</span>
+                <span>All expenses</span>
                 <div className="accordion-right">
                   <b>{formatMoney(filteredTotalSpent)}</b>
                   <Icon name="arrow" />
@@ -768,7 +765,7 @@ function App() {
                   <button className={`accordion-trigger ${expandedAccId.has(catId) ? "active" : ""}`} onClick={() => toggleAccordion(catId)}>
                     <div className="accordion-left">
                       <span className="mini-icon">{category?.icon ? <Icon name={category.icon} /> : "•"}</span>
-                      <span>{category?.name ?? "Без категории"}</span>
+                      <span>{category?.name ?? "No category"}</span>
                     </div>
                     <div className="accordion-right">
                       <b>{formatMoney(total)}</b>
@@ -786,7 +783,7 @@ function App() {
               );
             })}
           </div>
-          {!filteredExpenses.length && <p className="empty">В этом месяце трат нет.</p>}
+          {!filteredExpenses.length && <p className="empty">No expenses in this month.</p>}
         </>
       )}
 
@@ -805,12 +802,7 @@ function App() {
                 <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Category name" required autoFocus />
                 
                 <div className="budget-icon-row">
-                  <input name="budget" type="text" inputMode="numeric" defaultValue={String(editingCategory.budgets?.[selectedMonth] || "")} placeholder="Planned" onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
-                  <div className="operator-bar">
-                    {["+", "-", "*", "/"].map((op) => (
-                      <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
-                    ))}
-                  </div>
+                  <input name="budget" type="text" inputMode="numeric" defaultValue={String(editingCategory.budgets?.[selectedMonth] || "")} placeholder="Planned" />
 
                   <div className="icon-dropdown">
                     <input type="hidden" name="categoryIcon" value={categoryIconValue} />
@@ -837,8 +829,10 @@ function App() {
                     )}
                   </div>
                 </div>
-                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
-                <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteCategory}>Удалить</button>
+                <div className="button-row">
+                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Save"}</button>
+                  <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteCategory}>Delete</button>
+                </div>
               </form>
             </div>
           ) : showCategoryForm ? (
@@ -857,7 +851,7 @@ function App() {
                     <input type="hidden" name="categoryIcon" value={categoryIconValue} />
                     <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
                       <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
-                      <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Другое"}</span>
+                      <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Other"}</span>
                       <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                     </button>
                     {iconPickerOpen && (
@@ -878,7 +872,7 @@ function App() {
                     )}
                   </div>
                 </div>
-                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Создать" : "Создать"}</button>
+                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Creating…" : "Create"}</button>
               </form>
             </div>
           ) : null}
@@ -920,7 +914,8 @@ function App() {
               }}
             >
               <span><Icon name="plus" /></span>
-              <b>Добавить</b>
+              <b>Add</b>
+              <small style={{ fontSize: '9px' }}>{'\u00A0'}</small>
             </button>
           </section>
 
@@ -934,15 +929,10 @@ function App() {
               }}
             >
               <form className="expense-modal expense-modal--plain" onSubmit={addExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                <input name="amount" type="text" inputMode="numeric" placeholder="Сумма (можно 100+50*2)" required ref={amountInputRef} onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
-                <div className="operator-bar">
-                  {["+", "-", "*", "/"].map((op) => (
-                    <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
-                  ))}
-                </div>
+                <input name="amount" type="text" inputMode="numeric" placeholder="Amount" required ref={amountInputRef} onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
                 <input type="hidden" name="categoryId" value={expenseCategory.id} />
-                <input name="description" maxLength={300} placeholder="Что купили?" />
-                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
+                <input name="description" maxLength={300} placeholder="Description" />
+                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Saved"}</button>
               </form>
             </div>
           )}
