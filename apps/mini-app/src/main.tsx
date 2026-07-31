@@ -189,7 +189,7 @@ function Icon({ name }: { name: string }) {
 }
 
 function formatMoney(value: number) {
-  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(value);
+  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RSD", maximumFractionDigits: 0 }).format(value);
 }
 
 function ExpenseRow({ expense, onLongPress }: { expense: Expense; onLongPress: () => void }) {
@@ -841,11 +841,6 @@ function App() {
                 <input name="categoryName" maxLength={50} placeholder="Category name" required autoFocus />
                 <div className="budget-icon-row">
                   <input name="budget" type="text" inputMode="numeric" placeholder="Planned" onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
-                  <div className="operator-bar">
-                    {["+", "-", "*", "/"].map((op) => (
-                      <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
-                    ))}
-                  </div>
 
                   <div className="icon-dropdown">
                     <input type="hidden" name="categoryIcon" value={categoryIconValue} />

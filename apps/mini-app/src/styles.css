@@ -461,7 +461,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
   }
   to {
     opacity: 1;
-    transform: translateY(0);    /* Финальная позиция */
+    transform: translateY(-100px);    /* Финальная позиция */
   }
 }
 
@@ -473,6 +473,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
   align-items: end;
   padding: 16px 16px calc(18px + env(safe-area-inset-bottom));
   background: color-mix(in srgb, #191d2b 35%, transparent);
+  opacity: 0;
   animation: backdropFadeIn 0.3s ease-out .2s forwards;
 }
 
@@ -486,6 +487,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
   background: var(--secondary-bg-color);
   box-shadow: 0 20px 55px color-mix(in srgb, #000 25%, transparent);
   overflow: visible;
+  opacity: 0;
   animation: modalSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) .2s forwards;
 }
 
