@@ -433,7 +433,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
   align-items: end;
   padding: 16px 16px calc(18px + env(safe-area-inset-bottom));
   background: color-mix(in srgb, #191d2b 35%, transparent);
-  backdrop-filter: blur(3px);
+  transition: none;
 }
 
 .expense-modal {
@@ -446,6 +446,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
   background: var(--secondary-bg-color);
   box-shadow: 0 20px 55px color-mix(in srgb, #000 25%, transparent);
   overflow: visible;
+  transition: none;
 }
 
 .expense-modal button {

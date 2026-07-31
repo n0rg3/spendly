@@ -272,11 +272,8 @@ function App() {
   // Автофокус на поле суммы при выборе категории
   useEffect(() => {
     if (expenseCategory && amountInputRef.current) {
-      const timer = setTimeout(() => {
-        amountInputRef.current?.focus();
-        operatorInputRef.current = amountInputRef.current;
-      }, 100);
-      return () => clearTimeout(timer);
+      amountInputRef.current?.focus();
+      operatorInputRef.current = amountInputRef.current;
     }
   }, [expenseCategory]);
 
