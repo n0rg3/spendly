@@ -703,7 +703,7 @@ function App() {
             const evaluatedAmount = evaluateExpression(currentAmount);
             return (
               <div 
-                className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} 
+                className="modal-backdrop modal-shifted" 
                 onMouseDown={(e) => {
                   if (e.target === e.currentTarget) {
                     setEditingExpense(undefined);
@@ -716,7 +716,7 @@ function App() {
                   <input type="hidden" name="amount" value={isNaN(evaluatedAmount) ? 0 : evaluatedAmount} />
                   <button
                     type="button"
-                    className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "edit" ? "focused" : ""}`}
+                    className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "edit" ? "focused" : ""} ${!currentAmount ? "placeholder" : ""}`}
                     onClick={() => {
                       if (calcKeyboardTarget !== "edit") {
                         setAmountExpression(String(editingExpense.amount));
@@ -725,7 +725,7 @@ function App() {
                       setCalcKeyboardOpen(true);
                     }}
                   >
-                    {currentAmount || "Сумма, ₽"}
+                    {currentAmount || "Сумма"}
                   </button>
                   <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" onFocus={() => setCalcKeyboardOpen(false)} />
                   <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""} onFocus={() => setCalcKeyboardOpen(false)}>
@@ -797,7 +797,7 @@ function App() {
         <>
           {editingCategory ? (
             <div 
-              className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} 
+              className="modal-backdrop modal-shifted" 
               onMouseDown={(e) => {
                 if (e.target === e.currentTarget) {
                   setEditingCategory(undefined);
@@ -822,7 +822,7 @@ function App() {
                       setCalcKeyboardOpen(true);
                     }}
                   >
-                    {(calcKeyboardTarget === "category" ? amountExpression : String(editingCategory.budgets?.[selectedMonth] || "")) || "Бюджет на месяц, ₽"}
+                    {(calcKeyboardTarget === "category" ? amountExpression : String(editingCategory.budgets?.[selectedMonth] || "")) || "Бюджет на месяц"}
                   </button>
 
                   <div className="icon-dropdown">
@@ -934,7 +934,7 @@ function App() {
 
           {expenseCategory && (
             <div 
-              className={`modal-backdrop ${calcKeyboardOpen ? "modal-shifted" : ""}`} 
+              className="modal-backdrop modal-shifted" 
               onMouseDown={(e) => {
                 if (e.target === e.currentTarget) {
                   setExpenseCategory(undefined);
@@ -948,7 +948,7 @@ function App() {
                 <input type="hidden" name="categoryId" value={expenseCategory.id} />
                 <button
                   type="button"
-                  className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "add" ? "focused" : ""}`}
+                  className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "add" ? "focused" : ""} ${calcKeyboardTarget === "add" ? (!amountExpression ? "placeholder" : "") : "placeholder"}`}
                   onClick={() => {
                     if (calcKeyboardTarget !== "add") {
                       setAmountExpression("");
@@ -956,9 +956,9 @@ function App() {
                     }
                     setCalcKeyboardOpen(true);
                   }}
-                >
-                  {calcKeyboardTarget === "add" ? (amountExpression || "Сумма, ₽") : "Сумма, ₽"}
-                </button>
+                  >
+                    {calcKeyboardTarget === "add" ? (amountExpression || "Сумма") : "Сумма"}
+                  </button>
                 <input name="description" maxLength={300} placeholder="Что купили?" onFocus={() => setCalcKeyboardOpen(false)} />
                 <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
               </form>
