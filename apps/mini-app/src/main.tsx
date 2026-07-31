@@ -267,6 +267,18 @@ function App() {
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
   const operatorInputRef = useRef<HTMLInputElement | null>(null);
+  const amountInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Автофокус на поле суммы при выборе категории
+  useEffect(() => {
+    if (expenseCategory && amountInputRef.current) {
+      const timer = setTimeout(() => {
+        amountInputRef.current?.focus();
+        operatorInputRef.current = amountInputRef.current;
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [expenseCategory]);
 
   const insertOperator = (op: string) => {
     const input = operatorInputRef.current;
@@ -288,7 +300,8 @@ function App() {
   // Реалтайм-подписка на Firestore
   useEffect(() => {
     telegram?.ready();
-    telegram?.expand();
+    // @ts-ignore
+    telegram?.setViewportSettings?.({ expand: true });
 
     const userId = getUserId();
     const userDocRef = doc(db, "users", userId);
@@ -923,7 +936,7 @@ function App() {
               }}
             >
               <form className="expense-modal expense-modal--plain" onSubmit={addExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                <input name="amount" type="text" inputMode="numeric" placeholder="Сумма (можно 100+50*2)" required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                <input name="amount" type="text" inputMode="numeric" placeholder="Сумма (можно 100+50*2)" required ref={amountInputRef} onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
                 <div className="operator-bar">
                   {["+", "-", "*", "/"].map((op) => (
                     <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>

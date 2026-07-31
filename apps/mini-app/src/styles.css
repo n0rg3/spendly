@@ -18,21 +18,39 @@
 
 * { box-sizing: border-box; }
 
-body {
+/* ===== Фиксация viewport от сдвигов клавиатуры ===== */
+html, body {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
   margin: 0;
-  min-width: 320px;
+  overflow: hidden; /* Запрещает браузеру сдвигать/поджимать всю страницу */
   background: var(--bg-color);
   color: var(--text-color);
+}
+
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
 }
 
 button, input, select { font: inherit; color: inherit; }
 button { border: 0; cursor: pointer; }
 
+/* ===== Скроллируемая область контента ===== */
 main {
   max-width: 540px;
-  min-height: 100vh;
+  height: 100%;
   margin: 0 auto;
   padding: 26px 18px calc(108px + env(safe-area-inset-bottom));
+  overflow-y: auto; /* Внутренний скролл только для контента */
+  -webkit-overflow-scrolling: touch;
 }
 
 header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
@@ -524,6 +542,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
 .notice { margin: -8px 0 17px; padding: 12px; border-radius: 13px; color: #cf4747; background: color-mix(in srgb, #cf4747 10%, transparent); font-size: 14px; }
 .empty { grid-column: 1 / -1; margin: 0; padding: 20px; color: var(--hint-color); text-align: center; font-size: 14px; }
 
+/* ===== Зафиксированный нижний таб-бар ===== */
 nav {
   position: fixed;
   z-index: 5;
