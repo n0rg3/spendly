@@ -8,6 +8,7 @@
   --button-text-color: var(--tg-theme-button-text-color, #ffffff);
   --accent-color: #6270f4;
   --border-color: color-mix(in srgb, var(--text-color) 8%, transparent);
+  --visual-viewport-height: 100vh;
 }
 
 :root {
@@ -430,6 +431,31 @@ input:focus, select:focus { border-color: var(--accent-color); }
   text-align: left;
 }
 
+/* ===== Select wrapper with dropdown indicator ===== */
+.select-wrapper {
+  position: relative;
+}
+
+.select-wrapper::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-top: 5px solid var(--hint-color);
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  pointer-events: none;
+}
+
+.select-wrapper select {
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 .expense-modal--plain .calc-amount-display {
   font-weight: 400;
   text-align: left;
@@ -649,6 +675,36 @@ nav button.active { color: var(--link-color); }
   color: var(--button-text-color);
   font-size: 12px;
   font-weight: 600;
+}
+
+/* ===== Keyboard open state — системная клавиатура активна ===== */
+body.keyboard-open main {
+  /* Фиксируем высоту main по visual viewport, чтобы контент не прыгал */
+  min-height: var(--visual-viewport-height);
+  /* Убираем запас под навбар, так как он скрыт */
+  padding-bottom: calc(26px + env(safe-area-inset-bottom));
+}
+
+body.keyboard-open nav {
+  /* Прячем навбар, чтобы он не плавал над клавиатурой */
+  display: none;
+}
+
+body.keyboard-open .modal-backdrop {
+  /* Ограничиваем высоту backdrop видимой областью, чтобы скролл не уходил под клавиатуру */
+  top: 0;
+  bottom: auto;
+  height: var(--visual-viewport-height);
+  /* Добавляем высоту клавиатуры к нижнему padding, чтобы модалка не перекрывалась */
+  padding: 16px 16px calc(18px + env(safe-area-inset-bottom) + var(--keyboard-height, 0px));
+  /* Разрешаем скролл, если контент модалки не влезает */
+  overflow-y: auto;
+}
+
+body.keyboard-open .calc-keyboard-panel {
+  /* Если кастомная клавиатура открыта вместе с системной, фиксируем её низ */
+  position: fixed;
+  bottom: 0;
 }
 
 @media (min-width: 541px) {
