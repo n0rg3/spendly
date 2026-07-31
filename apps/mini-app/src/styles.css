@@ -16,7 +16,7 @@
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", Inter, sans-serif;
 }
 
-* { box-sizing: border-box; }
+*, *::before, *::after { box-sizing: border-box; transition: none !important; animation: none !important; }
 
 /* ===== Фиксация viewport от сдвигов клавиатуры ===== */
 html, body {

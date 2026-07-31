@@ -298,7 +298,7 @@ function App() {
   useEffect(() => {
     telegram?.ready();
     // @ts-ignore
-    telegram?.setViewportSettings?.({ expand: true });
+    telegram?.setViewportSettings?.({ expand: true, animation: false });
 
     const userId = getUserId();
     const userDocRef = doc(db, "users", userId);
@@ -691,7 +691,6 @@ function App() {
               )}
             </div>
             <div className="month-total">
-              <small>Траты за {formatMonth(selectedMonth)}</small>
               <b>{formatMoney(filteredTotalSpent)}</b>
             </div>
           </>
@@ -801,10 +800,10 @@ function App() {
               }}
             >
               <form className="expense-modal expense-modal--plain" onSubmit={updateCategory} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Название" required autoFocus />
+                <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Category name" required autoFocus />
                 
                 <div className="budget-icon-row">
-                  <input name="budget" type="text" inputMode="numeric" defaultValue={String(editingCategory.budgets?.[selectedMonth] || "")} placeholder="Бюджет на месяц" onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <input name="budget" type="text" inputMode="numeric" defaultValue={String(editingCategory.budgets?.[selectedMonth] || "")} placeholder="Planned" onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
                   <div className="operator-bar">
                     {["+", "-", "*", "/"].map((op) => (
                       <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
@@ -843,9 +842,9 @@ function App() {
           ) : showCategoryForm ? (
             <div className="modal-backdrop" onClick={() => setShowCategoryForm(false)}>
               <form className="expense-modal expense-modal--plain" onSubmit={addCategory} onClick={(e) => e.stopPropagation()}>
-                <input name="categoryName" maxLength={50} placeholder="Название" required autoFocus />
+                <input name="categoryName" maxLength={50} placeholder="Category name" required autoFocus />
                 <div className="budget-icon-row">
-                  <input name="budget" type="text" inputMode="numeric" placeholder="Бюджет на месяц" onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <input name="budget" type="text" inputMode="numeric" placeholder="Planned" onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
                   <div className="operator-bar">
                     {["+", "-", "*", "/"].map((op) => (
                       <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
