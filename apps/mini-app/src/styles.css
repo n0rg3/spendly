@@ -16,7 +16,7 @@
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", Inter, sans-serif;
 }
 
-*, *::before, *::after { box-sizing: border-box; transition: none !important; animation: none !important; }
+*, *::before, *::after { box-sizing: border-box; transition: none !important; }
 
 /* ===== Фиксация viewport от сдвигов клавиатуры ===== */
 html, body {
@@ -382,11 +382,17 @@ input:focus, select:focus { border-color: var(--accent-color); }
   flex: 1;
 }
 
+.input-with-operators {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
 /* ===== Operator Quick Access Bar ===== */
 .operator-bar {
   display: flex;
   gap: 8px;
-  margin-top: -4px;
+  margin-top: 11px;
 }
 
 .operator-btn {
@@ -439,6 +445,26 @@ input:focus, select:focus { border-color: var(--accent-color); }
   cursor: not-allowed;
 }
 
+@keyframes backdropFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(100px); /* Стартовая позиция ниже на 100px */
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);    /* Финальная позиция */
+  }
+}
+
 .modal-backdrop {
   position: fixed;
   z-index: 20;
@@ -447,6 +473,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
   align-items: end;
   padding: 16px 16px calc(18px + env(safe-area-inset-bottom));
   background: color-mix(in srgb, #191d2b 35%, transparent);
+  animation: backdropFadeIn 0.3s ease-out .2s forwards;
 }
 
 .expense-modal {
@@ -459,6 +486,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
   background: var(--secondary-bg-color);
   box-shadow: 0 20px 55px color-mix(in srgb, #000 25%, transparent);
   overflow: visible;
+  animation: modalSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) .2s forwards;
 }
 
 .expense-modal button {

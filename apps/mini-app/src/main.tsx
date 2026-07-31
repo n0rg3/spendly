@@ -720,7 +720,7 @@ function App() {
                   <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Description" />
                   <div className="select-wrapper">
                     <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""}>
-                      <option value="">Без категории</option>
+                      <option value="">No category</option>
                       {dashboard?.categories.map((category) => (
                         <option key={category.id} value={category.id}>{category.name}</option>
                       ))}
@@ -731,8 +731,8 @@ function App() {
                     <input name="time" type="time" defaultValue={initialDateTime.time} required />
                   </div>
                   <div className="button-row">
-                    <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Save"}</button>
-                    <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteExpense}>Delete</button>
+                    <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
+                    <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteExpense}>Удалить</button>
                   </div>
                 </form>
               </div>
@@ -741,20 +741,20 @@ function App() {
 
           <div className="accordion-list">
             <div className="accordion-item">
-              <button className={`accordion-trigger ${expandedAccId.has("all") ? "inactive" : ""}`} onClick={() => toggleAccordion("all")}>
-                <span>All expenses</span>
-                <div className="accordion-right">
-                  <b>{formatMoney(filteredTotalSpent)}</b>
-                  <Icon name="arrow" />
-                </div>
-              </button>
-              {expandedAccId.has("all") && (
-                <div className="accordion-content list-card">
-                  {filteredExpenses.map((ex) => (
-                    <ExpenseRow key={ex.id} expense={ex} onLongPress={() => setEditingExpense(ex)} />
-                  ))}
-                </div>
-              )}
+                  <button className={`accordion-trigger ${expandedAccId.has("all") ? "inactive" : ""}`} onClick={() => toggleAccordion("all")}>
+                    <span>Все траты</span>
+                    <div className="accordion-right">
+                      <b>{formatMoney(filteredTotalSpent)}</b>
+                      <Icon name="arrow" />
+                    </div>
+                  </button>
+                  {expandedAccId.has("all") && (
+                    <div className="accordion-content list-card">
+                      {filteredExpenses.map((ex) => (
+                        <ExpenseRow key={ex.id} expense={ex} onLongPress={() => setEditingExpense(ex)} />
+                      ))}
+                    </div>
+                  )}
             </div>
 
             {[...groupedExpenses.entries()].map(([catId, expenses]) => {
@@ -765,7 +765,7 @@ function App() {
                   <button className={`accordion-trigger ${expandedAccId.has(catId) ? "active" : ""}`} onClick={() => toggleAccordion(catId)}>
                     <div className="accordion-left">
                       <span className="mini-icon">{category?.icon ? <Icon name={category.icon} /> : "•"}</span>
-                      <span>{category?.name ?? "No category"}</span>
+                      <span>{category?.name ?? "Без категории"}</span>
                     </div>
                     <div className="accordion-right">
                       <b>{formatMoney(total)}</b>
@@ -783,7 +783,7 @@ function App() {
               );
             })}
           </div>
-          {!filteredExpenses.length && <p className="empty">No expenses in this month.</p>}
+          {!filteredExpenses.length && <p className="empty">В этом месяце трат нет.</p>}
         </>
       )}
 
@@ -808,7 +808,7 @@ function App() {
                     <input type="hidden" name="categoryIcon" value={categoryIconValue} />
                     <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
                       <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
-                      <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Другое"}</span>
+                      <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Other"}</span>
                       <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                     </button>
                     {iconPickerOpen && (
@@ -872,7 +872,7 @@ function App() {
                     )}
                   </div>
                 </div>
-                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Creating…" : "Create"}</button>
+                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Creating" : "Create"}</button>
               </form>
             </div>
           ) : null}
@@ -899,7 +899,7 @@ function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
                   <small>{formatMoney(categoryStats.find((item) => item.id === category.id)?.amount ?? 0)}</small>
                   {category.budgets?.[selectedMonth] && (
-                    <small style={{ fontSize: '9px', opacity: 0.8 }}>из {formatMoney(category.budgets[selectedMonth])}</small>
+                    <small style={{ fontSize: '9px', opacity: 0.8 }}>from {formatMoney(category.budgets[selectedMonth])}</small>
                   )}
                 </div>
               </button>
@@ -929,10 +929,17 @@ function App() {
               }}
             >
               <form className="expense-modal expense-modal--plain" onSubmit={addExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                <input name="amount" type="text" inputMode="numeric" placeholder="Amount" required ref={amountInputRef} onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                <div className="input-with-operators">
+                  <input name="amount" type="text" inputMode="numeric" placeholder="Amount" required ref={amountInputRef} onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <div className="operator-bar">
+                    {["+", "-", "*", "/"].map((op) => (
+                      <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
+                    ))}
+                  </div>
+                </div>
                 <input type="hidden" name="categoryId" value={expenseCategory.id} />
                 <input name="description" maxLength={300} placeholder="Description" />
-                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Saved"}</button>
+                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Save"}</button>
               </form>
             </div>
           )}
@@ -944,7 +951,7 @@ function App() {
           <section className="chart-card">
             <div className="donut" style={{ background: chartBackground }}>
               <div>
-                <small>Всего</small>
+                <small>Total</small>
                 <b>{formatMoney(filteredTotalSpent)}</b>
               </div>
             </div>
@@ -956,7 +963,7 @@ function App() {
                   <b>{formatMoney(item.amount)}</b>
                 </div>
               ))}
-              {categoryStats.length === 0 && <p className="empty">Данные появятся после добавления трат.</p>}
+              {categoryStats.length === 0 && <p className="empty">Data will appear after adding expenses.</p>}
             </div>
           </section>
         </>
@@ -966,9 +973,9 @@ function App() {
         <>
           <section className="savings-card">
             <span className="savings-icon"><Icon name="goal" /></span>
-            <h2>Создайте первую цель</h2>
-            <p>Например, отпуск, новый телефон или финансовую подушку.</p>
-            <button type="button">Добавить накопление</button>
+            <h2>Create your first goal</h2>
+            <p>For example, a vacation, a new phone, or a financial cushion.</p>
+            <button type="button">Add savings</button>
           </section>
         </>
       )}
