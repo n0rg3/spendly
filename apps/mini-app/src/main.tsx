@@ -269,6 +269,20 @@ function App() {
   const operatorInputRef = useRef<HTMLInputElement | null>(null);
   const amountInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Сброс прокрутки страницы при открытии клавиатуры (предотвращает сдвиг окна вверх)
+  useEffect(() => {
+    const handleFocusIn = (e: FocusEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
+        window.scrollTo(0, 0);
+        document.body.scrollTop = 0;
+      }
+    };
+
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
+  }, []);
+
   // Автофокус на поле суммы при выборе категории
   useEffect(() => {
     if (expenseCategory && amountInputRef.current) {
