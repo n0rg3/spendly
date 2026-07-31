@@ -457,11 +457,11 @@ input:focus, select:focus { border-color: var(--accent-color); }
 @keyframes modalSlideUp {
   from {
     opacity: 0;
-    transform: translateY(100px); /* Стартовая позиция ниже на 100px */
+    transform: translateY(50px); /* Стартовая позиция ниже на 100px */
   }
   to {
     opacity: 1;
-    transform: translateY(-100px);    /* Финальная позиция */
+    transform: translateY(0px);    /* Финальная позиция */
   }
 }
 
