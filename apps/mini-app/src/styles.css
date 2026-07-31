@@ -8,7 +8,6 @@
   --button-text-color: var(--tg-theme-button-text-color, #ffffff);
   --accent-color: #6270f4;
   --border-color: color-mix(in srgb, var(--text-color) 8%, transparent);
-  --visual-viewport-height: 100vh;
 }
 
 :root {
@@ -315,7 +314,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
   position: relative;
 }
 
-.budget-icon-row .calc-amount-display {
+.budget-icon-row input {
   width: 75% !important;
 }
 
@@ -343,11 +342,6 @@ input:focus, select:focus { border-color: var(--accent-color); }
 
 .budget-icon-row .icon-dropdown .icon-dropdown-icon {
   margin: 0;
-}
-
-.calc-amount-display.placeholder {
-  color: var(--hint-color);
-  opacity: 0.65;
 }
 
 .icon-dropdown-option {
@@ -456,17 +450,6 @@ input:focus, select:focus { border-color: var(--accent-color); }
   appearance: none;
 }
 
-.expense-modal--plain .calc-amount-display {
-  font-weight: 400;
-  text-align: left;
-}
-
-.expense-modal--plain .calc-amount-display {
-  font-weight: 400;
-  text-align: left;
-  justify-content: flex-start;
-}
-
 .expense-modal--plain button[type="submit"],
 .expense-modal--plain button.danger-button {
   font-weight: 400;
@@ -522,190 +505,6 @@ nav {
 
 nav button { display: grid; gap: 4px; place-items: center; min-width: 54px; padding: 0; color: var(--hint-color); background: transparent; font-size: 10px; font-weight: 650; }
 nav button.active { color: var(--link-color); }
-
-/* ===== Amount Display (показывает выражение, выглядит как input) ===== */
-.calc-amount-display {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  height: 48px;
-  border: 1px solid var(--border-color);
-  border-radius: 13px;
-  padding: 0 14px;
-  outline: none;
-  background: color-mix(in srgb, var(--text-color) 3%, transparent);
-  font-size: 18px;
-  font-weight: 600;
-  text-align: left;
-  color: var(--text-color);
-  -webkit-appearance: none;
-  appearance: none;
-  cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-.calc-amount-display.focused {
-  border-color: var(--accent-color);
-}
-
-.calc-amount-display:active {
-  background: color-mix(in srgb, var(--text-color) 6%, transparent);
-}
-
-/* Blinking cursor indicator for amount input */
-/* Cursor at start when field is empty (placeholder shown) */
-.calc-amount-display.focused.placeholder::before {
-  content: "|";
-  animation: cursor-blink 1s step-end infinite;
-  margin-right: 2px;
-  color: var(--hint-color);
-  font-weight: 300;
-  font-size: 20px;
-}
-
-/* Cursor at end when field has a value */
-.calc-amount-display.focused:not(.placeholder)::after {
-  content: "|";
-  animation: cursor-blink 1s step-end infinite;
-  margin-left: 2px;
-  color: var(--text-color);
-  font-weight: 300;
-  font-size: 20px;
-}
-
-@keyframes cursor-blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
-}
-
-/* ===== Modal shift when keyboard open ===== */
-.modal-shifted {
-  padding-bottom: calc(216px + env(safe-area-inset-bottom));
-}
-
-/* ===== Calculator Keyboard Panel (fixed bottom) ===== */
-.calc-keyboard-panel {
-  position: fixed;
-  z-index: 30;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  max-width: 540px;
-  height: calc(300px + env(safe-area-inset-bottom));
-  margin: 0 auto;
-  background: var(--secondary-bg-color);
-  border-radius: 20px 20px 0 0;
-  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
-  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.15);
-  animation: calc-slide-up .25s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-@keyframes calc-slide-up {
-  from { transform: translateY(100%); }
-  to { transform: translateY(0); }
-}
-
-/* Сетка кнопок */
-.calc-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  height: 100%;
-  align-content: center;
-}
-
-.calc-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 60px;
-  border: none;
-  border-radius: 20%;
-  font-size: 22px;
-  font-weight: 400;
-  cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
-  transition: opacity 0.1s ease;
-  padding: 0;
-  aspect-ratio: 1;
-  margin: 0 auto;
-  width: 100%;
-  max-width: 60px;
-}
-
-.calc-btn:active {
-  opacity: 0.5;
-}
-
-/* Цифровые кнопки — используют цвет кнопки темы */
-.calc-btn-num {
-  background: color-mix(in srgb, var(--text-color) 6%, transparent);
-  color: var(--text-color);
-}
-
-/* Функциональные кнопки (Стереть) */
-.calc-btn-func {
-  background: color-mix(in srgb, var(--text-color) 10%, transparent);
-  color: var(--text-color);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-/* Операторы (+, −, ×) */
-.calc-btn-op {
-  background: color-mix(in srgb, var(--text-color) 10%, transparent);
-  color: var(--link-color);
-  font-size: 24px;
-  font-weight: 500;
-}
-
-/* Кнопка = */
-.calc-btn-equals {
-  background: var(--link-color);
-  color: var(--secondary-bg-color);
-  font-size: 22px;
-  font-weight: 500;
-}
-
-/* Кнопка Принять — использует цвет кнопки темы */
-.calc-btn-submit {
-  background: var(--button-color);
-  color: var(--button-text-color);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-/* ===== Keyboard open state — системная клавиатура активна ===== */
-body.keyboard-open main {
-  /* Фиксируем высоту main по visual viewport, чтобы контент не прыгал */
-  min-height: var(--visual-viewport-height);
-  /* Убираем запас под навбар, так как он скрыт */
-  padding-bottom: calc(26px + env(safe-area-inset-bottom));
-}
-
-body.keyboard-open nav {
-  /* Прячем навбар, чтобы он не плавал над клавиатурой */
-  display: none;
-}
-
-body.keyboard-open .modal-backdrop {
-  /* Ограничиваем высоту backdrop видимой областью, чтобы скролл не уходил под клавиатуру */
-  top: 0;
-  bottom: auto;
-  height: var(--visual-viewport-height);
-  /* Добавляем высоту клавиатуры к нижнему padding, чтобы модалка не перекрывалась */
-  padding: 16px 16px calc(18px + env(safe-area-inset-bottom) + var(--keyboard-height, 0px));
-  /* Разрешаем скролл, если контент модалки не влезает */
-  overflow-y: auto;
-}
-
-body.keyboard-open .calc-keyboard-panel {
-  /* Если кастомная клавиатура открыта вместе с системной, фиксируем её низ */
-  position: fixed;
-  bottom: 0;
-}
 
 @media (min-width: 541px) {
   nav {

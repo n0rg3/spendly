@@ -4,7 +4,6 @@ import { createRoot } from "react-dom/client";
 import * as LucideIcons from "lucide-react";
 import { doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db } from "./firebase";
-import CalculatorKeyboard from "./CalculatorKeyboard";
 import "./styles.css";
 
 type Category = { 
@@ -236,6 +235,19 @@ function ExpenseRow({ expense, onLongPress }: { expense: Expense; onLongPress: (
   );
 }
 
+function evaluateExpression(expression: string): number {
+  try {
+    const sanitized = expression.replace(/,/g, ".");
+    const result = Function(`"use strict"; return (${sanitized})`)();
+    if (typeof result === "number" && isFinite(result)) {
+      return Math.round(result);
+    }
+    return NaN;
+  } catch {
+    return NaN;
+  }
+}
+
 function App() {
   const telegram = window.Telegram?.WebApp;
   const [dashboard, setDashboard] = useState<Dashboard>();
@@ -252,101 +264,8 @@ function App() {
   const [categoryIconValue, setCategoryIconValue] = useState("other");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [expandedAccId, setExpandedAccId] = useState<Set<string>>(new Set());
-  const [calcKeyboardOpen, setCalcKeyboardOpen] = useState(false);
-  const [amountExpression, setAmountExpression] = useState("");
-  const [calcKeyboardTarget, setCalcKeyboardTarget] = useState<"add" | "edit" | "category">("add");
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
-  const [isSystemKeyboardOpen, setIsSystemKeyboardOpen] = useState(false);
-
-  const OPERATORS = ["+", "-", "*", "/"];
-
-  function evaluateExpression(expression: string): number {
-    try {
-      const result = Function(`"use strict"; return (${expression})`)();
-      if (typeof result === "number" && isFinite(result)) {
-        return Math.round(result);
-      }
-      return NaN;
-    } catch {
-      return NaN;
-    }
-  }
-
-  const handleCalcInput = (char: string) => {
-    setAmountExpression((prev) => {
-      const lastChar = prev.slice(-1);
-      if (OPERATORS.includes(lastChar) && OPERATORS.includes(char)) {
-        return prev.slice(0, -1) + char;
-      }
-      return prev + char;
-    });
-  };
-
-  const handleCalcBackspace = () => {
-    setAmountExpression((prev) => prev.slice(0, -1));
-  };
-
-  const handleCalcSubmit = () => {
-    setCalcKeyboardOpen(false);
-  };
-
-  // Следим за появлением/скрытием системной клавиатуры через visualViewport
-  useEffect(() => {
-    const visualViewport = window.visualViewport;
-    if (!visualViewport) return;
-
-    let rafId: number | null = null;
-
-    const handleResize = () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        const windowHeight = window.innerHeight;
-        const vvHeight = visualViewport.height;
-        const diff = windowHeight - vvHeight;
-
-        // Если разница между высотой окна и visualViewport > 100px — скорее всего открыта клавиатура
-        const isOpen = diff > 100;
-
-        setIsSystemKeyboardOpen(isOpen);
-
-        if (isOpen) {
-          // Высота клавиатуры
-          const keyboardHeight = Math.max(diff, 0);
-          document.documentElement.style.setProperty('--visual-viewport-height', `${vvHeight}px`);
-          document.documentElement.style.setProperty('--keyboard-height', `${keyboardHeight}px`);
-          // Фиксируем body, чтобы предотвратить скролл при фокусе на input
-          document.body.style.height = `${vvHeight}px`;
-          document.body.style.position = 'fixed';
-          document.body.style.overflow = 'hidden';
-          document.body.style.width = '100%';
-          document.body.classList.add('keyboard-open');
-        } else {
-          document.documentElement.style.removeProperty('--visual-viewport-height');
-          document.documentElement.style.removeProperty('--keyboard-height');
-          document.body.style.height = '';
-          document.body.style.position = '';
-          document.body.style.overflow = '';
-          document.body.style.width = '';
-          document.body.classList.remove('keyboard-open');
-        }
-      });
-    };
-
-    visualViewport.addEventListener('resize', handleResize);
-    return () => {
-      visualViewport.removeEventListener('resize', handleResize);
-      if (rafId) cancelAnimationFrame(rafId);
-      // Сброс при размонтировании
-      document.documentElement.style.removeProperty('--visual-viewport-height');
-      document.documentElement.style.removeProperty('--keyboard-height');
-      document.body.style.height = '';
-      document.body.style.position = '';
-      document.body.style.overflow = '';
-      document.body.style.width = '';
-      document.body.classList.remove('keyboard-open');
-    };
-  }, []);
 
   // Реалтайм-подписка на Firestore
   useEffect(() => {
@@ -398,7 +317,8 @@ function App() {
     const form = new FormData(formElement);
     const name = String(form.get("categoryName") ?? "").trim();
     const icon = String(form.get("categoryIcon") ?? "other");
-    const budgetAmount = Number(form.get("budget") ?? 0);
+    const budgetStr = String(form.get("budget") ?? "").trim();
+    const budgetAmount = budgetStr ? evaluateExpression(budgetStr) : 0;
 
     if (!name || !dashboard) return;
 
@@ -415,8 +335,6 @@ function App() {
       await saveToFirebase(updated);
       formElement.reset();
       setShowCategoryForm(false);
-      setAmountExpression("");
-      setCalcKeyboardOpen(false);
     } catch {
       setError("Не удалось создать категорию");
     } finally {
@@ -428,11 +346,12 @@ function App() {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const amount = Number(form.get("amount"));
+    const amountStr = String(form.get("amount") ?? "").trim();
+    const amount = evaluateExpression(amountStr);
     const description = String(form.get("description") ?? "");
     const categoryId = String(form.get("categoryId") ?? "");
 
-    if (!amount || amount <= 0 || !dashboard) return;
+    if (!amountStr || !amount || amount <= 0 || !dashboard) return;
 
     setIsSubmitting(true);
     setError(undefined);
@@ -457,8 +376,6 @@ function App() {
       formElement.reset();
       setShowExpenseForm(false);
       setExpenseCategory(undefined);
-      setAmountExpression("");
-      setCalcKeyboardOpen(false);
     } catch {
       setError("Не удалось добавить расход");
     } finally {
@@ -474,7 +391,8 @@ function App() {
     const form = new FormData(formElement);
     const name = String(form.get("categoryName") ?? "").trim();
     const icon = String(form.get("categoryIcon") ?? "other");
-    const budgetAmount = Number(form.get("budget") ?? 0);
+    const budgetStr = String(form.get("budget") ?? "").trim();
+    const budgetAmount = budgetStr ? evaluateExpression(budgetStr) : 0;
 
     if (!name) return;
 
@@ -502,8 +420,6 @@ function App() {
 
       await saveToFirebase({ ...dashboard, categories: updatedCategories, expenses: updatedExpenses });
       setEditingCategory(undefined);
-      setAmountExpression("");
-      setCalcKeyboardOpen(false);
     } catch {
       setError("Не удалось изменить категорию");
     } finally {
@@ -525,10 +441,16 @@ function App() {
       return;
     }
 
-    const amount = Number(form.get("amount"));
+    const amountStr = String(form.get("amount") ?? "").trim();
+    const amount = evaluateExpression(amountStr);
     const description = String(form.get("description") ?? "");
     const categoryId = String(form.get("categoryId") ?? "");
     const category = dashboard.categories.find((c) => c.id === categoryId) || null;
+
+    if (!amountStr || !amount || amount <= 0) {
+      setError("Укажите корректную сумму");
+      return;
+    }
 
     setIsSubmitting(true);
     setError(undefined);
@@ -545,8 +467,6 @@ function App() {
         totalSpent: updatedExpenses.reduce((sum, e) => sum + e.amount, 0),
       });
       setEditingExpense(undefined);
-      setAmountExpression("");
-      setCalcKeyboardOpen(false);
     } catch {
       setError("Не удалось изменить трату");
     } finally {
@@ -589,8 +509,6 @@ function App() {
         totalSpent: updatedExpenses.reduce((sum, e) => sum + e.amount, 0),
       });
       setEditingExpense(undefined);
-      setAmountExpression("");
-      setCalcKeyboardOpen(false);
     } catch {
       setError("Не удалось удалить трату");
     } finally {
@@ -759,37 +677,20 @@ function App() {
           <div className="section-title"><h2>Последние траты</h2></div>
           {editingExpense && (() => {
             const initialDateTime = toLocalDateTime(editingExpense.createdAt);
-            const currentAmount = calcKeyboardTarget === "edit" ? amountExpression : String(editingExpense.amount);
-            const evaluatedAmount = evaluateExpression(currentAmount);
             return (
               <div 
-                className="modal-backdrop modal-shifted" 
+                className="modal-backdrop" 
                 onMouseDown={(e) => {
                   if (e.target === e.currentTarget) {
                     setEditingExpense(undefined);
-                    setCalcKeyboardOpen(false);
-                    setAmountExpression("");
                   }
                 }}
               >
                 <form className="expense-modal expense-modal--plain" onSubmit={updateExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                  <input type="hidden" name="amount" value={isNaN(evaluatedAmount) ? 0 : evaluatedAmount} />
-                  <button
-                    type="button"
-                    className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "edit" ? "focused" : ""} ${!currentAmount ? "placeholder" : ""}`}
-                    onClick={() => {
-                      if (calcKeyboardTarget !== "edit") {
-                        setAmountExpression(String(editingExpense.amount));
-                        setCalcKeyboardTarget("edit");
-                      }
-                      setCalcKeyboardOpen(true);
-                    }}
-                  >
-                    {currentAmount || "Сумма"}
-                  </button>
-                  <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" onFocus={() => setCalcKeyboardOpen(false)} />
+                  <input name="amount" type="text" inputMode="text" defaultValue={String(editingExpense.amount)} placeholder="Сумма" required />
+                  <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" />
                   <div className="select-wrapper">
-                    <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""} onFocus={() => setCalcKeyboardOpen(false)}>
+                    <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""}>
                       <option value="">Без категории</option>
                       {dashboard?.categories.map((category) => (
                         <option key={category.id} value={category.id}>{category.name}</option>
@@ -797,8 +698,8 @@ function App() {
                     </select>
                   </div>
                   <div className="date-time">
-                    <input name="date" type="date" defaultValue={initialDateTime.date} required onFocus={() => setCalcKeyboardOpen(false)} />
-                    <input name="time" type="time" defaultValue={initialDateTime.time} required onFocus={() => setCalcKeyboardOpen(false)} />
+                    <input name="date" type="date" defaultValue={initialDateTime.date} required />
+                    <input name="time" type="time" defaultValue={initialDateTime.time} required />
                   </div>
                   <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
                   <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteExpense}>Удалить</button>
@@ -859,33 +760,18 @@ function App() {
         <>
           {editingCategory ? (
             <div 
-              className="modal-backdrop modal-shifted" 
+              className="modal-backdrop" 
               onMouseDown={(e) => {
                 if (e.target === e.currentTarget) {
                   setEditingCategory(undefined);
-                  setCalcKeyboardOpen(false);
-                  setAmountExpression("");
                 }
               }}
             >
               <form className="expense-modal expense-modal--plain" onSubmit={updateCategory} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Название" required autoFocus onFocus={() => setCalcKeyboardOpen(false)} />
+                <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Название" required autoFocus />
                 
                 <div className="budget-icon-row">
-                  <input type="hidden" name="budget" value={calcKeyboardTarget === "category" ? (isNaN(evaluateExpression(amountExpression)) ? 0 : evaluateExpression(amountExpression)) : (editingCategory.budgets?.[selectedMonth] || 0)} />
-                  <button
-                    type="button"
-                    className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "category" ? "focused" : ""} ${!(calcKeyboardTarget === "category" ? amountExpression : String(editingCategory.budgets?.[selectedMonth] || "")) ? "placeholder" : ""}`}
-                    onClick={() => {
-                      if (calcKeyboardTarget !== "category") {
-                        setAmountExpression(String(editingCategory.budgets?.[selectedMonth] || ""));
-                        setCalcKeyboardTarget("category");
-                      }
-                      setCalcKeyboardOpen(true);
-                    }}
-                  >
-                    {(calcKeyboardTarget === "category" ? amountExpression : String(editingCategory.budgets?.[selectedMonth] || "")) || "Бюджет на месяц"}
-                  </button>
+                  <input name="budget" type="text" inputMode="text" defaultValue={String(editingCategory.budgets?.[selectedMonth] || "")} placeholder="Бюджет на месяц" />
 
                   <div className="icon-dropdown">
                     <input type="hidden" name="categoryIcon" value={categoryIconValue} />
@@ -919,22 +805,10 @@ function App() {
           ) : showCategoryForm ? (
             <div className="modal-backdrop" onClick={() => setShowCategoryForm(false)}>
               <form className="expense-modal expense-modal--plain" onSubmit={addCategory} onClick={(e) => e.stopPropagation()}>
-                <input name="categoryName" maxLength={50} placeholder="Название" required autoFocus onFocus={() => setCalcKeyboardOpen(false)} />
+                <input name="categoryName" maxLength={50} placeholder="Название" required autoFocus />
                 <div className="budget-icon-row">
-                  <input type="hidden" name="budget" value={calcKeyboardTarget === "category" ? (isNaN(evaluateExpression(amountExpression)) ? 0 : evaluateExpression(amountExpression)) : 0} />
-                  <button
-                    type="button"
-                    className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "category" ? "focused" : ""} ${calcKeyboardTarget === "category" ? (!amountExpression ? "placeholder" : "") : "placeholder"}`}
-                    onClick={() => {
-                      if (calcKeyboardTarget !== "category") {
-                        setAmountExpression("");
-                        setCalcKeyboardTarget("category");
-                      }
-                      setCalcKeyboardOpen(true);
-                    }}
-                  >
-                    {calcKeyboardTarget === "category" ? (amountExpression || "Бюджет на месяц") : "Бюджет на месяц"}
-                  </button>
+                  <input name="budget" type="text" inputMode="text" placeholder="Бюджет на месяц" />
+
                   <div className="icon-dropdown">
                     <input type="hidden" name="categoryIcon" value={categoryIconValue} />
                     <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
@@ -999,8 +873,6 @@ function App() {
                 setCategoryIconValue("other");
                 setIconPickerOpen(false);
                 setShowCategoryForm(true);
-                setAmountExpression("");
-                setCalcKeyboardOpen(false);
               }}
             >
               <span><Icon name="plus" /></span>
@@ -1010,32 +882,17 @@ function App() {
 
           {expenseCategory && (
             <div 
-              className="modal-backdrop modal-shifted" 
+              className="modal-backdrop" 
               onMouseDown={(e) => {
                 if (e.target === e.currentTarget) {
                   setExpenseCategory(undefined);
-                  setCalcKeyboardOpen(false);
-                  setAmountExpression("");
                 }
               }}
             >
               <form className="expense-modal expense-modal--plain" onSubmit={addExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                <input type="hidden" name="amount" value={calcKeyboardTarget === "add" ? (isNaN(evaluateExpression(amountExpression)) ? 0 : evaluateExpression(amountExpression)) : 0} />
+                <input name="amount" type="text" inputMode="text" placeholder="Сумма (можно 100+50*2)" required />
                 <input type="hidden" name="categoryId" value={expenseCategory.id} />
-                <button
-                  type="button"
-                  className={`calc-amount-display ${calcKeyboardOpen && calcKeyboardTarget === "add" ? "focused" : ""} ${calcKeyboardTarget === "add" ? (!amountExpression ? "placeholder" : "") : "placeholder"}`}
-                  onClick={() => {
-                    if (calcKeyboardTarget !== "add") {
-                      setAmountExpression("");
-                      setCalcKeyboardTarget("add");
-                    }
-                    setCalcKeyboardOpen(true);
-                  }}
-                  >
-                    {calcKeyboardTarget === "add" ? (amountExpression || "Сумма") : "Сумма"}
-                  </button>
-                <input name="description" maxLength={300} placeholder="Что купили?" onFocus={() => setCalcKeyboardOpen(false)} />
+                <input name="description" maxLength={300} placeholder="Что купили?" />
                 <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
               </form>
             </div>
@@ -1075,14 +932,6 @@ function App() {
             <button type="button">Добавить накопление</button>
           </section>
         </>
-      )}
-
-      {calcKeyboardOpen && (editingExpense || expenseCategory || editingCategory || showCategoryForm) && (
-        <CalculatorKeyboard
-          onInput={handleCalcInput}
-          onBackspace={handleCalcBackspace}
-          onSubmit={handleCalcSubmit}
-        />
       )}
 
       <nav aria-label="Основная навигация">
