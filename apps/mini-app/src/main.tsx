@@ -266,6 +266,24 @@ function App() {
   const [expandedAccId, setExpandedAccId] = useState<Set<string>>(new Set());
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
+  const operatorInputRef = useRef<HTMLInputElement | null>(null);
+
+  const insertOperator = (op: string) => {
+    const input = operatorInputRef.current;
+    if (!input) return;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const newValue = input.value.slice(0, start) + op + input.value.slice(end);
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+    nativeSetter?.call(input, newValue);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    const newPos = start + op.length;
+    input.setSelectionRange(newPos, newPos);
+    input.focus();
+  };
 
   // Реалтайм-подписка на Firestore
   useEffect(() => {
@@ -687,7 +705,12 @@ function App() {
                 }}
               >
                 <form className="expense-modal expense-modal--plain" onSubmit={updateExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                  <input name="amount" type="text" inputMode="text" defaultValue={String(editingExpense.amount)} placeholder="Сумма" required />
+                  <input name="amount" type="text" inputMode="numeric" defaultValue={String(editingExpense.amount)} placeholder="Сумма" required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <div className="operator-bar">
+                    {["+", "-", "*", "/"].map((op) => (
+                      <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
+                    ))}
+                  </div>
                   <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Что купили?" />
                   <div className="select-wrapper">
                     <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""}>
@@ -771,7 +794,12 @@ function App() {
                 <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Название" required autoFocus />
                 
                 <div className="budget-icon-row">
-                  <input name="budget" type="text" inputMode="text" defaultValue={String(editingCategory.budgets?.[selectedMonth] || "")} placeholder="Бюджет на месяц" />
+                  <input name="budget" type="text" inputMode="numeric" defaultValue={String(editingCategory.budgets?.[selectedMonth] || "")} placeholder="Бюджет на месяц" onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <div className="operator-bar">
+                    {["+", "-", "*", "/"].map((op) => (
+                      <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
+                    ))}
+                  </div>
 
                   <div className="icon-dropdown">
                     <input type="hidden" name="categoryIcon" value={categoryIconValue} />
@@ -807,7 +835,12 @@ function App() {
               <form className="expense-modal expense-modal--plain" onSubmit={addCategory} onClick={(e) => e.stopPropagation()}>
                 <input name="categoryName" maxLength={50} placeholder="Название" required autoFocus />
                 <div className="budget-icon-row">
-                  <input name="budget" type="text" inputMode="text" placeholder="Бюджет на месяц" />
+                  <input name="budget" type="text" inputMode="numeric" placeholder="Бюджет на месяц" onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <div className="operator-bar">
+                    {["+", "-", "*", "/"].map((op) => (
+                      <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
+                    ))}
+                  </div>
 
                   <div className="icon-dropdown">
                     <input type="hidden" name="categoryIcon" value={categoryIconValue} />
@@ -890,7 +923,12 @@ function App() {
               }}
             >
               <form className="expense-modal expense-modal--plain" onSubmit={addExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                <input name="amount" type="text" inputMode="text" placeholder="Сумма (можно 100+50*2)" required />
+                <input name="amount" type="text" inputMode="numeric" placeholder="Сумма (можно 100+50*2)" required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                <div className="operator-bar">
+                  {["+", "-", "*", "/"].map((op) => (
+                    <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
+                  ))}
+                </div>
                 <input type="hidden" name="categoryId" value={expenseCategory.id} />
                 <input name="description" maxLength={300} placeholder="Что купили?" />
                 <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>

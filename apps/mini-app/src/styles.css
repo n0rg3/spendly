@@ -312,6 +312,12 @@ input:focus, select:focus { border-color: var(--accent-color); }
   align-items: center;
   width: 100%;
   position: relative;
+  flex-wrap: wrap;
+}
+
+.budget-icon-row .operator-bar {
+  width: 100%;
+  order: 1;
 }
 
 .budget-icon-row input {
@@ -342,6 +348,36 @@ input:focus, select:focus { border-color: var(--accent-color); }
 
 .budget-icon-row .icon-dropdown .icon-dropdown-icon {
   margin: 0;
+}
+
+/* ===== Operator Quick Access Bar ===== */
+.operator-bar {
+  display: flex;
+  gap: 8px;
+  margin-top: -4px;
+}
+
+.operator-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  height: 40px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--button-color) 8%, transparent);
+  color: var(--button-color);
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: opacity 0.1s ease;
+  padding: 0;
+}
+
+.operator-btn:active {
+  opacity: 0.5;
 }
 
 .icon-dropdown-option {
