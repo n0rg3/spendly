@@ -6,6 +6,41 @@ import { doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db } from "./firebase";
 import "./styles.css";
 
+function lockViewport() {
+  if (!window.visualViewport) return;
+
+  const vv = window.visualViewport;
+
+  const reset = () => {
+    // Принудительно "отменяем" авто-скролл/пан, который iOS
+    // делает при фокусе на input, чтобы подвинуть его над клавиатурой
+    window.scrollTo(0, 0);
+  };
+
+  vv.addEventListener('resize', reset);
+  vv.addEventListener('scroll', reset);
+
+  // на всякий случай ещё и на фокус/блюр инпутов
+  document.addEventListener('focusin', () => setTimeout(reset, 50));
+  document.addEventListener('focusout', () => setTimeout(reset, 50));
+}
+
+lockViewport();
+
+// вызвать один раз при старте приложения
+function lockAppHeight() {
+  const setHeight = () => {
+    document.documentElement.style.setProperty('--app-height', `${window.innerHeight}px`);
+  };
+  setHeight();
+  // НЕ подписываемся на resize от visualViewport — иначе высота будет
+  // "гулять" вместе с клавиатурой, что нам и не нужно
+  window.addEventListener('orientationchange', () => setTimeout(setHeight, 300));
+}
+lockAppHeight();
+
+
+
 type Category = { 
   id: string; 
   name: string; 
@@ -270,18 +305,28 @@ function App() {
   const amountInputRef = useRef<HTMLInputElement | null>(null);
 
   // Сброс прокрутки страницы при открытии клавиатуры (предотвращает сдвиг окна вверх)
-  useEffect(() => {
-    const handleFocusIn = (e: FocusEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
-        window.scrollTo(0, 0);
-        document.body.scrollTop = 0;
-      }
-    };
+// Сброс прокрутки страницы при открытии клавиатуры (предотвращает сдвиг окна вверх)
+useEffect(() => {
+  const handleFocusIn = (e: FocusEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
+      window.scrollTo(0, 0);
+      document.body.scrollTop = 0;
+    }
+  };
 
-    document.addEventListener("focusin", handleFocusIn);
-    return () => document.removeEventListener("focusin", handleFocusIn);
-  }, []);
+  document.addEventListener("focusin", handleFocusIn);
+  return () => document.removeEventListener("focusin", handleFocusIn);
+}, []);
+
+// Инициализация Telegram WebApp
+useEffect(() => {
+  if (window.Telegram?.WebApp) {
+    window.Telegram.WebApp.ready();
+    window.Telegram.WebApp.expand();
+    window.Telegram.WebApp.disableVerticalSwipes();
+  }
+}, []);
 
   // Автофокус на поле суммы при выборе категории
   useEffect(() => {
@@ -313,6 +358,7 @@ function App() {
     telegram?.ready();
     // @ts-ignore
     telegram?.setViewportSettings?.({ expand: true, animation: false });
+    
 
     const userId = getUserId();
     const userDocRef = doc(db, "users", userId);
@@ -756,7 +802,7 @@ function App() {
           <div className="accordion-list">
             <div className="accordion-item">
                   <button className={`accordion-trigger ${expandedAccId.has("all") ? "inactive" : ""}`} onClick={() => toggleAccordion("all")}>
-                    <span>Все траты</span>
+                    <span>All expenses</span>
                     <div className="accordion-right">
                       <b>{formatMoney(filteredTotalSpent)}</b>
                       <Icon name="arrow" />
