@@ -585,7 +585,10 @@ nav {
   display: flex;
   justify-content: center;
   gap: min(7vw, 32px);
-  padding: 11px 20px calc(11px + env(safe-area-inset-bottom));
+  /* Выступаем за границы вьюпорта в safe area снизу, чтобы фон таб-бара
+     закрывал всю нижнюю область (включая домашнюю полосу iPhone) */
+  margin-bottom: calc(env(safe-area-inset-bottom) * -1);
+  padding-bottom: calc(22px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border-color);
   background: color-mix(in srgb, var(--secondary-bg-color) 88%, transparent);
   backdrop-filter: blur(18px);
@@ -596,9 +599,11 @@ nav button.active { color: var(--link-color); }
 
 @media (min-width: 541px) {
   nav {
+    /* На десктопе safe area отсутствует — возвращаем стандартный отступ */
     width: 540px;
     right: auto;
     margin: auto;
+    padding-bottom: 11px;
     border-right: 1px solid var(--border-color);
     border-left: 1px solid var(--border-color);
     border-radius: 20px 20px 0 0;
