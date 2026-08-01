@@ -6,37 +6,29 @@ import { doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db } from "./firebase";
 import "./styles.css";
 
-function lockViewport() {
-  if (!window.visualViewport) return;
-
-  const vv = window.visualViewport;
-
-  const reset = () => {
-    // Принудительно "отменяем" авто-скролл/пан, который iOS
-    // делает при фокусе на input, чтобы подвинуть его над клавиатурой
-    window.scrollTo(0, 0);
-  };
-
-  vv.addEventListener('resize', reset);
-  vv.addEventListener('scroll', reset);
-
-  // на всякий случай ещё и на фокус/блюр инпутов
-  document.addEventListener('focusin', () => setTimeout(reset, 50));
-  document.addEventListener('focusout', () => setTimeout(reset, 50));
-}
-
-lockViewport();
-
-// вызвать один раз при старте приложения
 function lockAppHeight() {
+  const tg = window.Telegram?.WebApp;
+
   const setHeight = () => {
-    document.documentElement.style.setProperty('--app-height', `${window.innerHeight}px`);
+    // viewportStableHeight — высота БЕЗ учёта поднятой клавиатуры.
+    // Если Mini App открыт не в Telegram (обычный браузер) — fallback на innerHeight.
+    const h = tg?.viewportStableHeight || window.innerHeight;
+    document.documentElement.style.setProperty('--app-height', `${h}px`);
   };
+
   setHeight();
-  // НЕ подписываемся на resize от visualViewport — иначе высота будет
-  // "гулять" вместе с клавиатурой, что нам и не нужно
+
+  if (tg?.onEvent) {
+    // Стреляет при появлении/скрытии клавиатуры и при разворачивании приложения
+    tg.onEvent('viewportChanged', setHeight);
+  } else {
+    // fallback для обычного браузера
+    window.addEventListener('resize', setHeight);
+  }
+
   window.addEventListener('orientationchange', () => setTimeout(setHeight, 300));
 }
+
 lockAppHeight();
 
 

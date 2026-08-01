@@ -11,6 +11,11 @@ interface TelegramWebApp {
   colorScheme: "light" | "dark";
   ready(): void;
   expand(): void;
+  viewportHeight: number;
+  viewportStableHeight: number;
+  onEvent: (eventType: string, callback: () => void) => void;
+  offEvent: (eventType: string, callback: () => void) => void;
+  disableVerticalSwipes: () => void;
 }
 
 interface Window {
