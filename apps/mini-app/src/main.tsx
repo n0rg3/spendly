@@ -41,7 +41,16 @@ type Category = {
   budgets?: Record<string, number>; // { "2026-07": 5000 }
 };
 type Expense = { id: string; amount: number; description: string | null; createdAt: string; category: Category | null };
-type Dashboard = { categories: Category[]; expenses: Expense[]; totalSpent: number; userCreatedAt: string };
+type SavingsGoal = {
+  id: string;
+  name: string;
+  targetAmount: number;
+  savedAmount: number;
+  icon: string | null;
+  color: string | null;
+  createdAt: string;
+};
+type Dashboard = { categories: Category[]; expenses: Expense[]; totalSpent: number; userCreatedAt: string; savingsGoals: SavingsGoal[] };
 type Tab = "categories" | "expenses" | "chart" | "savings";
 
 const DEFAULT_DASHBOARD: Dashboard = {
@@ -53,6 +62,7 @@ const DEFAULT_DASHBOARD: Dashboard = {
   expenses: [],
   totalSpent: 0,
   userCreatedAt: new Date().toISOString(),
+  savingsGoals: [],
 };
 
 const tabItems: { id: Tab; label: string; icon: string }[] = [
@@ -283,8 +293,12 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
+  const [showGoalForm, setShowGoalForm] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category>();
   const [editingExpense, setEditingExpense] = useState<Expense>();
+  const [editingGoal, setEditingGoal] = useState<SavingsGoal>();
+  const [goalTopUpGoal, setGoalTopUpGoal] = useState<SavingsGoal>();
+  const [goalIconValue, setGoalIconValue] = useState("goal");
   const [expenseCategory, setExpenseCategory] = useState<Category>();
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
@@ -293,6 +307,8 @@ function App() {
   const [expandedAccId, setExpandedAccId] = useState<Set<string>>(new Set());
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
+  const goalPressTimer = useRef<number | undefined>(undefined);
+  const goalDidLongPress = useRef(false);
   const operatorInputRef = useRef<HTMLInputElement | null>(null);
   const amountInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -600,6 +616,130 @@ useEffect(() => {
     }
   };
 
+  const addGoal = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const name = String(form.get("goalName") ?? "").trim();
+    const targetStr = String(form.get("targetAmount") ?? "").trim();
+    const targetAmount = evaluateExpression(targetStr);
+    const icon = String(form.get("goalIcon") ?? "goal");
+
+    if (!name || !targetAmount || targetAmount <= 0 || !dashboard) return;
+
+    setIsSubmitting(true);
+    setError(undefined);
+    try {
+      const newGoal: SavingsGoal = {
+        id: String(Date.now()),
+        name,
+        targetAmount,
+        savedAmount: 0,
+        icon,
+        color: null,
+        createdAt: new Date().toISOString(),
+      };
+      const updated: Dashboard = {
+        ...dashboard,
+        savingsGoals: [...(dashboard.savingsGoals ?? []), newGoal],
+      };
+
+      await saveToFirebase(updated);
+      formElement.reset();
+      setShowGoalForm(false);
+    } catch {
+      setError("Не удалось создать цель");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const updateGoal = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingGoal || !dashboard) return;
+
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const name = String(form.get("goalName") ?? "").trim();
+    const targetStr = String(form.get("targetAmount") ?? "").trim();
+    const targetAmount = evaluateExpression(targetStr);
+    const icon = String(form.get("goalIcon") ?? "goal");
+
+    if (!name || !targetAmount || targetAmount <= 0) return;
+
+    setIsSubmitting(true);
+    setError(undefined);
+    try {
+      const updatedGoals = (dashboard.savingsGoals ?? []).map((g) =>
+        g.id === editingGoal.id ? { ...g, name, targetAmount, icon } : g
+      );
+
+      await saveToFirebase({ ...dashboard, savingsGoals: updatedGoals });
+      setEditingGoal(undefined);
+    } catch {
+      setError("Не удалось изменить цель");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const deleteGoal = async () => {
+    if (!editingGoal || !dashboard || !window.confirm(`Удалить цель «${editingGoal.name}»?`)) return;
+
+    setIsSubmitting(true);
+    setError(undefined);
+    try {
+      const updatedGoals = (dashboard.savingsGoals ?? []).filter((g) => g.id !== editingGoal.id);
+      await saveToFirebase({ ...dashboard, savingsGoals: updatedGoals });
+      setEditingGoal(undefined);
+    } catch {
+      setError("Не удалось удалить цель");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const adjustGoalAmount = async (formElement: HTMLFormElement, mode: "topup" | "withdraw") => {
+    if (!goalTopUpGoal || !dashboard) return;
+
+    const form = new FormData(formElement);
+    const amountStr = String(form.get("topUpAmount") ?? "").trim();
+    const amount = evaluateExpression(amountStr);
+    if (!amountStr || !amount || amount <= 0) return;
+
+    setIsSubmitting(true);
+    setError(undefined);
+    try {
+      const updatedGoals = (dashboard.savingsGoals ?? []).map((g) =>
+        g.id === goalTopUpGoal.id
+          ? { ...g, savedAmount: mode === "topup" ? g.savedAmount + amount : Math.max(0, g.savedAmount - amount) }
+          : g
+      );
+
+      await saveToFirebase({ ...dashboard, savingsGoals: updatedGoals });
+      formElement.reset();
+      setGoalTopUpGoal(undefined);
+    } catch {
+      setError("Не удалось обновить цель");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const startGoalPress = (goal: SavingsGoal) => {
+    goalDidLongPress.current = false;
+    goalPressTimer.current = window.setTimeout(() => {
+      goalDidLongPress.current = true;
+      setEditingGoal(goal);
+      setGoalIconValue(goal.icon || "goal");
+      setIconPickerOpen(false);
+    }, 650);
+  };
+
+  const endGoalPress = () => {
+    if (goalPressTimer.current) window.clearTimeout(goalPressTimer.current);
+  };
+
   const startCategoryPress = (category: Category) => {
     didLongPress.current = false;
     categoryPressTimer.current = window.setTimeout(() => {
@@ -702,7 +842,7 @@ useEffect(() => {
     setExpandedAccId(next);
   };
 
-  const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory;
+  const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal;
 
   return (
     <main className={isModalOpen ? "modal-open" : ""} onClick={() => { setShowMonthPicker(false); setIconPickerOpen(false); }}>
@@ -1022,12 +1162,170 @@ useEffect(() => {
 
       {activeTab === "savings" && (
         <>
-          <section className="savings-card">
-            <span className="savings-icon"><Icon name="goal" /></span>
-            <h2>Create your first goal</h2>
-            <p>For example, a vacation, a new phone, or a financial cushion.</p>
-            <button type="button">Add savings</button>
-          </section>
+          {editingGoal ? (
+            <div 
+              className="modal-backdrop" 
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) {
+                  setEditingGoal(undefined);
+                }
+              }}
+            >
+              <form className="expense-modal expense-modal--plain" onSubmit={updateGoal} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+                <input name="goalName" maxLength={50} defaultValue={editingGoal.name} placeholder="Название цели" required autoFocus />
+                <div className="budget-icon-row">
+                  <input name="targetAmount" type="text" inputMode="numeric" defaultValue={String(editingGoal.targetAmount)} placeholder="Целевая сумма" required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <div className="icon-dropdown">
+                    <input type="hidden" name="goalIcon" value={goalIconValue} />
+                    <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
+                      <span className="icon-dropdown-icon"><Icon name={goalIconValue} /></span>
+                      <span className="icon-dropdown-label">{ICON_LABELS[goalIconValue] ?? "Цель"}</span>
+                      <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
+                    </button>
+                    {iconPickerOpen && (
+                      <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
+                        {CATEGORY_ICONS.map((icon) => (
+                          <button
+                            type="button"
+                            key={icon}
+                            className={`icon-dropdown-option${goalIconValue === icon ? " selected" : ""}`}
+                            onClick={() => { setGoalIconValue(icon); setIconPickerOpen(false); }}
+                          >
+                            <Icon name={icon} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="button-row">
+                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
+                  <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteGoal}>Удалить</button>
+                </div>
+              </form>
+            </div>
+          ) : showGoalForm ? (
+            <div className="modal-backdrop" onClick={() => setShowGoalForm(false)}>
+              <form className="expense-modal expense-modal--plain" onSubmit={addGoal} onClick={(e) => e.stopPropagation()}>
+                <input name="goalName" maxLength={50} placeholder="Название цели" required autoFocus />
+                <div className="budget-icon-row">
+                  <input name="targetAmount" type="text" inputMode="numeric" placeholder="Целевая сумма" required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <div className="icon-dropdown">
+                    <input type="hidden" name="goalIcon" value={goalIconValue} />
+                    <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
+                      <span className="icon-dropdown-icon"><Icon name={goalIconValue} /></span>
+                      <span className="icon-dropdown-label">{ICON_LABELS[goalIconValue] ?? "Цель"}</span>
+                      <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
+                    </button>
+                    {iconPickerOpen && (
+                      <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
+                        {CATEGORY_ICONS.map((icon) => (
+                          <button
+                            type="button"
+                            key={icon}
+                            className={`icon-dropdown-option${goalIconValue === icon ? " selected" : ""}`}
+                            onClick={() => { setGoalIconValue(icon); setIconPickerOpen(false); }}
+                          >
+                            <Icon name={icon} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Создаю…" : "Создать цель"}</button>
+              </form>
+            </div>
+          ) : goalTopUpGoal ? (
+            <div 
+              className="modal-backdrop" 
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) {
+                  setGoalTopUpGoal(undefined);
+                }
+              }}
+            >
+              <form className="expense-modal expense-modal--plain" onSubmit={(e) => { e.preventDefault(); void adjustGoalAmount(e.currentTarget, "topup"); }} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+                <div className="goal-topup-title">
+                  <span className="goal-topup-icon"><Icon name={goalTopUpGoal.icon || "goal"} /></span>
+                  <div>
+                    <b>{goalTopUpGoal.name}</b>
+                    <small>{formatMoney(goalTopUpGoal.savedAmount)} из {formatMoney(goalTopUpGoal.targetAmount)}</small>
+                  </div>
+                </div>
+                <input name="topUpAmount" type="text" inputMode="numeric" placeholder="Сумма" required autoFocus onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                <div className="button-row">
+                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Пополнить"}</button>
+                  <button type="button" className="danger-button" disabled={isSubmitting} onClick={(e) => { const form = e.currentTarget.closest("form"); if (form) void adjustGoalAmount(form, "withdraw"); }}>Снять</button>
+                </div>
+              </form>
+            </div>
+          ) : null}
+
+          {(dashboard?.savingsGoals?.length ?? 0) === 0 ? (
+            <section className="savings-card">
+              <span className="savings-icon"><Icon name="goal" /></span>
+              <h2>Создайте первую цель</h2>
+              <p>Например, отпуск, новый телефон или подушка безопасности.</p>
+              <button type="button" onClick={() => { setEditingGoal(undefined); setGoalIconValue("goal"); setIconPickerOpen(false); setShowGoalForm(true); }}>Добавить цель</button>
+            </section>
+          ) : (
+            <div className="goals-list">
+              {(dashboard?.savingsGoals ?? []).map((goal) => {
+                const progress = goal.targetAmount > 0 ? Math.min(100, Math.round((goal.savedAmount / goal.targetAmount) * 100)) : 0;
+                const isDone = goal.savedAmount >= goal.targetAmount;
+                return (
+                  <div className={`goal-card${isDone ? " goal-card--done" : ""}`} key={goal.id}>
+                    <button
+                      className="goal-card-main"
+                      onPointerDown={() => startGoalPress(goal)}
+                      onPointerUp={endGoalPress}
+                      onPointerCancel={endGoalPress}
+                      onContextMenu={(e) => e.preventDefault()}
+                      onClick={() => {
+                        if (goalDidLongPress.current) {
+                          goalDidLongPress.current = false;
+                          return;
+                        }
+                        setGoalTopUpGoal(goal);
+                      }}
+                    >
+                      <span className="goal-card-icon"><Icon name={goal.icon || "goal"} /></span>
+                      <div className="goal-card-info">
+                        <div className="goal-card-head">
+                          <b>{goal.name}</b>
+                          <span className="goal-card-percent">{progress}%</span>
+                        </div>
+                        <div className="goal-progress-track">
+                          <div className="goal-progress-fill" style={{ width: `${progress}%` }} />
+                        </div>
+                        <div className="goal-card-amounts">
+                          <small>{formatMoney(goal.savedAmount)}</small>
+                          <small>из {formatMoney(goal.targetAmount)}</small>
+                        </div>
+                      </div>
+                    </button>
+                    <div className="goal-card-actions">
+                      <button type="button" onClick={() => setGoalTopUpGoal(goal)}>Пополнить</button>
+                      <button type="button" className="goal-card-withdraw" onClick={() => setGoalTopUpGoal(goal)}>Снять</button>
+                    </div>
+                  </div>
+                );
+              })}
+              <button
+                className="add-goal-button"
+                onClick={() => {
+                  setEditingGoal(undefined);
+                  setGoalIconValue("goal");
+                  setIconPickerOpen(false);
+                  setShowGoalForm(true);
+                }}
+              >
+                <Icon name="plus" />
+                <span>Новая цель</span>
+              </button>
+            </div>
+          )}
         </>
       )}
 

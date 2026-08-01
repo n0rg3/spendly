@@ -9,6 +9,7 @@ const DEFAULT_DASHBOARD = {
   expenses: [],
   totalSpent: 0,
   userCreatedAt: new Date().toISOString(),
+  savingsGoals: [],
 };
 
 export async function getOrCreateUser(telegramId: string) {

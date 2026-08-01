@@ -4,7 +4,16 @@ import { firestore } from "./firebase.js";
 
 type Category = { id: string; name: string; icon: string | null; color: string | null };
 type Expense = { id: string; amount: number; description: string | null; createdAt: string; category: Category | null };
-type Dashboard = { categories: Category[]; expenses: Expense[]; totalSpent: number; userCreatedAt: string };
+type SavingsGoal = {
+  id: string;
+  name: string;
+  targetAmount: number;
+  savedAmount: number;
+  icon: string | null;
+  color: string | null;
+  createdAt: string;
+};
+type Dashboard = { categories: Category[]; expenses: Expense[]; totalSpent: number; userCreatedAt: string; savingsGoals: SavingsGoal[] };
 
 const configuredBotToken = process.env.BOT_TOKEN;
 const developmentUserId = process.env.DEV_TELEGRAM_USER_ID;
@@ -75,6 +84,7 @@ const DEFAULT_DASHBOARD: Dashboard = {
   expenses: [],
   totalSpent: 0,
   userCreatedAt: new Date().toISOString(),
+  savingsGoals: [],
 };
 
 async function getOrCreateDashboard(telegramId: string): Promise<{ id: string; telegramId: string } & Dashboard> {
@@ -127,12 +137,13 @@ app.get<{ Querystring: { month?: string } }>("/api/dashboard", async (request, r
       return e.createdAt.startsWith(month);
     });
 
-    return {
-      categories: dashboard.categories,
-      expenses: filteredExpenses,
-      totalSpent: filteredExpenses.reduce((sum, e) => sum + e.amount, 0),
-      userCreatedAt: dashboard.userCreatedAt,
-    };
+  return {
+    categories: dashboard.categories,
+    expenses: filteredExpenses,
+    totalSpent: filteredExpenses.reduce((sum, e) => sum + e.amount, 0),
+    userCreatedAt: dashboard.userCreatedAt,
+    savingsGoals: dashboard.savingsGoals ?? [],
+  };
   }
 
   return {
@@ -140,6 +151,7 @@ app.get<{ Querystring: { month?: string } }>("/api/dashboard", async (request, r
     expenses: dashboard.expenses,
     totalSpent: dashboard.totalSpent,
     userCreatedAt: dashboard.userCreatedAt,
+    savingsGoals: dashboard.savingsGoals ?? [],
   };
 });
 
@@ -231,6 +243,147 @@ app.delete<{ Params: { id: string } }>(
       ...dashboard,
       categories: updatedCategories,
       expenses: updatedExpenses,
+    };
+
+    await userDocRef.set(updated);
+
+    return reply.code(204).send();
+  },
+);
+
+app.get("/api/goals", async (request, reply) => {
+  return reply.send(request.dashboard.savingsGoals ?? []);
+});
+
+app.post<{ Body: { name?: string; targetAmount?: number; icon?: string; color?: string } }>(
+  "/api/goals",
+  async (request, reply) => {
+    const name = request.body.name?.trim();
+    const targetAmount = request.body.targetAmount;
+
+    if (!name || name.length > 50) {
+      return reply.code(400).send({ error: "Название цели: от 1 до 50 символов" });
+    }
+    if (!Number.isFinite(targetAmount) || !targetAmount || targetAmount <= 0) {
+      return reply.code(400).send({ error: "Укажите целевую сумму больше нуля" });
+    }
+
+    const dashboard = request.dashboard;
+    const userDocRef = firestore.collection("users").doc(request.user.telegramId);
+
+    const newGoal: SavingsGoal = {
+      id: String(Date.now()),
+      name,
+      targetAmount,
+      savedAmount: 0,
+      icon: request.body.icon?.trim() || null,
+      color: request.body.color?.trim() || null,
+      createdAt: new Date().toISOString(),
+    };
+
+    const updated: Dashboard = {
+      ...dashboard,
+      savingsGoals: [...(dashboard.savingsGoals ?? []), newGoal],
+    };
+
+    await userDocRef.set(updated);
+
+    return reply.code(201).send(newGoal);
+  },
+);
+
+app.patch<{ Params: { id: string }; Body: { name?: string; targetAmount?: number; icon?: string; color?: string } }>(
+  "/api/goals/:id",
+  async (request, reply) => {
+    const dashboard = request.dashboard;
+    const goal = (dashboard.savingsGoals ?? []).find((g) => g.id === request.params.id);
+    if (!goal) return reply.code(404).send({ error: "Цель не найдена" });
+
+    const name = request.body.name?.trim();
+    const targetAmount = request.body.targetAmount;
+
+    if (name !== undefined && (!name || name.length > 50)) {
+      return reply.code(400).send({ error: "Название цели: от 1 до 50 символов" });
+    }
+    if (targetAmount !== undefined && (!Number.isFinite(targetAmount) || targetAmount <= 0)) {
+      return reply.code(400).send({ error: "Укажите целевую сумму больше нуля" });
+    }
+
+    const userDocRef = firestore.collection("users").doc(request.user.telegramId);
+
+    const updatedGoals = (dashboard.savingsGoals ?? []).map((g) =>
+      g.id === request.params.id
+        ? {
+            ...g,
+            ...(name !== undefined ? { name } : {}),
+            ...(targetAmount !== undefined ? { targetAmount } : {}),
+            ...(request.body.icon !== undefined ? { icon: request.body.icon.trim() || null } : {}),
+            ...(request.body.color !== undefined ? { color: request.body.color.trim() || null } : {}),
+          }
+        : g
+    );
+
+    const updated: Dashboard = {
+      ...dashboard,
+      savingsGoals: updatedGoals,
+    };
+
+    await userDocRef.set(updated);
+
+    return updatedGoals.find((g) => g.id === request.params.id);
+  },
+);
+
+app.post<{ Params: { id: string }; Body: { amount?: number; mode?: "topup" | "withdraw" } }>(
+  "/api/goals/:id/transactions",
+  async (request, reply) => {
+    const dashboard = request.dashboard;
+    const goal = (dashboard.savingsGoals ?? []).find((g) => g.id === request.params.id);
+    if (!goal) return reply.code(404).send({ error: "Цель не найдена" });
+
+    const amount = request.body.amount;
+    const mode = request.body.mode ?? "topup";
+
+    if (!Number.isFinite(amount) || !amount || amount <= 0) {
+      return reply.code(400).send({ error: "Укажите сумму больше нуля" });
+    }
+    if (mode !== "topup" && mode !== "withdraw") {
+      return reply.code(400).send({ error: "Некорректный режим операции" });
+    }
+
+    const userDocRef = firestore.collection("users").doc(request.user.telegramId);
+
+    const updatedGoals = (dashboard.savingsGoals ?? []).map((g) =>
+      g.id === request.params.id
+        ? { ...g, savedAmount: mode === "topup" ? g.savedAmount + amount : Math.max(0, g.savedAmount - amount) }
+        : g
+    );
+
+    const updated: Dashboard = {
+      ...dashboard,
+      savingsGoals: updatedGoals,
+    };
+
+    await userDocRef.set(updated);
+
+    return updatedGoals.find((g) => g.id === request.params.id);
+  },
+);
+
+app.delete<{ Params: { id: string } }>(
+  "/api/goals/:id",
+  async (request, reply) => {
+    const dashboard = request.dashboard;
+    const goal = (dashboard.savingsGoals ?? []).find((g) => g.id === request.params.id);
+    if (!goal) return reply.code(404).send({ error: "Цель не найдена" });
+
+    const userDocRef = firestore.collection("users").doc(request.user.telegramId);
+
+    const updatedGoals = (dashboard.savingsGoals ?? []).filter((g) => g.id !== request.params.id);
+
+    const updated: Dashboard = {
+      ...dashboard,
+      savingsGoals: updatedGoals,
     };
 
     await userDocRef.set(updated);
