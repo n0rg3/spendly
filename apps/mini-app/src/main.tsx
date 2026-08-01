@@ -404,8 +404,13 @@ useEffect(() => {
     setIsSubmitting(true);
     setError(undefined);
     try {
-      const budgets = budgetAmount > 0 ? { [selectedMonth]: budgetAmount } : undefined;
-      const newCategory: Category = { id: String(Date.now()), name, icon, color: null, budgets };
+      const newCategory: Category = {
+        id: String(Date.now()),
+        name,
+        icon,
+        color: null,
+        ...(budgetAmount > 0 ? { budgets: { [selectedMonth]: budgetAmount } } : {}),
+      };
       const updated: Dashboard = {
         ...dashboard,
         categories: [...dashboard.categories, newCategory],
@@ -415,7 +420,7 @@ useEffect(() => {
       formElement.reset();
       setShowCategoryForm(false);
     } catch {
-      setError("Не удалось создать категорию");
+      setError("Could not add a category");
     } finally {
       setIsSubmitting(false);
     }
