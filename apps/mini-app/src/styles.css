@@ -726,8 +726,8 @@ input:focus, select:focus { border-color: var(--accent-color); }
 .notice { margin: -8px 0 17px; padding: 12px; border-radius: 13px; color: #cf4747; background: color-mix(in srgb, #cf4747 10%, transparent); font-size: 14px; }
 .empty { grid-column: 1 / -1; margin: 0; padding: 20px; color: var(--hint-color); text-align: center; font-size: 14px; }
 
-/* ===== Зафиксированный нижний таб-бар ===== */
-nav {
+/* ===== Зафиксированный нижний таб-бар (легаси, не используется floating-tab-bar) ===== */
+nav:not(.floating-tab-bar) {
   position: fixed;
   z-index: 5;
   right: 0;
@@ -745,11 +745,11 @@ nav {
   backdrop-filter: blur(18px);
 }
 
-nav button { display: grid; gap: 4px; place-items: center; min-width: 54px; padding: 0; color: var(--hint-color); background: transparent; font-size: 10px; font-weight: 650; }
-nav button.active { color: var(--link-color); }
+nav:not(.floating-tab-bar) button { display: grid; gap: 4px; place-items: center; min-width: 54px; padding: 0; color: var(--hint-color); background: transparent; font-size: 10px; font-weight: 650; }
+nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
 
 @media (min-width: 541px) {
-  nav {
+  nav:not(.floating-tab-bar) {
     /* На десктопе safe area отсутствует — возвращаем стандартный отступ */
     width: 540px;
     right: auto;
@@ -759,4 +759,158 @@ nav button.active { color: var(--link-color); }
     border-left: 1px solid var(--border-color);
     border-radius: 20px 20px 0 0;
   }
+}
+
+/* ===== Нативный iOS Floating Tab Bar (Glassmorphic) ===== */
+.floating-tab-bar {
+  position: fixed;
+  z-index: 1000;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: 32px;
+  background: color-mix(in srgb, var(--secondary-bg-color) 78%, transparent);
+  backdrop-filter: blur(25px) saturate(180%);
+  -webkit-backdrop-filter: blur(25px) saturate(180%);
+  border: 0.5px solid var(--border-color);
+}
+
+/* ===== Центральная кнопка (FAB) ===== */
+.fab-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  color: #ffffff;
+  background: #0A84FF;
+  transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(10, 132, 255, 0.4);
+}
+
+/* Белый плюс по центру кнопки */
+.fab-button::before,
+.fab-button::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  content: "";
+  border-radius: 2px;
+  background: var(--hint-color);
+  transform: translate(-50%, -50%);
+}
+
+.fab-button::before {
+  width: 20px;
+  height: 2px;
+}
+
+.fab-button::after {
+  width: 2px;
+  height: 20px;
+}
+
+/* FAB не участвует в распределении ширины — иначе круг сплющивается */
+.floating-tab-bar .fab-button {
+  flex: 0 0 auto;
+}
+
+.floating-tab-bar button {
+  display: grid;
+  flex: 1 1 0;
+  min-width: 0;
+  place-items: center;
+  align-content: center;
+  justify-items: center;
+  padding: 0;
+  color: var(--hint-color);
+  background: transparent;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.floating-tab-bar button.active { color: var(--link-color); }
+.floating-tab-bar button span { color: inherit; }
+
+/* Скрытие таб-бара при открытом модальном окне траты */
+.floating-tab-bar {
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+
+.floating-tab-bar.tab-bar-hidden {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(140%);
+}
+
+/* ===== iOS Action Sheet («+» меню) ===== */
+.add-menu-backdrop {
+  position: fixed;
+  z-index: 2000;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.4);
+  animation: add-menu-fade 0.25s ease;
+}
+
+.add-menu-backdrop,
+.add-menu-sheet {
+  max-width: 540px;
+  margin-inline: auto;
+}
+
+@keyframes add-menu-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.add-menu-sheet {
+  width: 100%;
+  padding: 8px 10px calc(14px + env(safe-area-inset-bottom));
+  display: grid;
+  gap: 8px;
+  animation: add-menu-slide-up 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes add-menu-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.add-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  color: var(--link-color);
+  background: color-mix(in srgb, var(--secondary-bg-color) 94%, transparent);
+  backdrop-filter: blur(25px) saturate(180%);
+  -webkit-backdrop-filter: blur(25px) saturate(180%);
+  font-size: 17px;
+  font-weight: 590;
+  text-align: center;
+  transition: background 0.15s ease;
+}
+
+.add-menu-item:active {
+  background: color-mix(in srgb, var(--secondary-bg-color) 70%, var(--border-color));
+}
+
+.add-menu-grabber {
+  width: 36px;
+  height: 5px;
+  margin: 2px auto 2px;
+  border-radius: 3px;
+  background: var(--hint-color);
+  opacity: 0.55;
 }

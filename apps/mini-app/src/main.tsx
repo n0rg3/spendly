@@ -65,12 +65,8 @@ const DEFAULT_DASHBOARD: Dashboard = {
   savingsGoals: [],
 };
 
-const tabItems: { id: Tab; label: string; icon: string }[] = [
-  { id: "categories", label: "Категории", icon: "grid" },
-  { id: "expenses", label: "Траты", icon: "card" },
-  { id: "chart", label: "График", icon: "chart" },
-  { id: "savings", label: "Накопления", icon: "goal" },
-];
+// Псевдо-категория: модалка траты открыта вручную (без категории)
+const MANUAL_NO_CATEGORY: Category = { id: "", name: "Без категории", icon: "other", color: null };
 
 function getUserId(): string {
   const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
@@ -305,6 +301,7 @@ function App() {
   const [categoryIconValue, setCategoryIconValue] = useState("other");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [expandedAccId, setExpandedAccId] = useState<Set<string>>(new Set());
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
   const goalPressTimer = useRef<number | undefined>(undefined);
@@ -332,6 +329,8 @@ useEffect(() => {
   if (window.Telegram?.WebApp) {
     window.Telegram.WebApp.ready();
     window.Telegram.WebApp.expand();
+    // Предупреждение при попытке закрыть Mini App с несохранёнными данными
+    window.Telegram.WebApp.enableClosingConfirmation();
   }
 }, []);
 
@@ -842,6 +841,76 @@ useEffect(() => {
     setExpandedAccId(next);
   };
 
+  // ===== iOS Action Sheet («+» меню) =====
+  const openAddMenu = () => {
+    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("medium");
+    console.log("Open add menu");
+    setIsAddMenuOpen(true);
+  };
+
+  const closeAddMenu = () => setIsAddMenuOpen(false);
+
+  // Свайп вниз по шиту закрывает меню
+  const onSheetTouchStart = (e: React.TouchEvent) => {
+    (e.currentTarget as HTMLDivElement).setAttribute("data-sy", String(e.touches[0].clientY));
+  };
+
+  const onSheetTouchMove = (e: React.TouchEvent) => {
+    const sheet = e.currentTarget as HTMLDivElement;
+    const startY = Number(sheet.getAttribute("data-sy") ?? "");
+    if (Number.isNaN(startY)) return;
+    const dy = Math.max(0, e.touches[0].clientY - startY);
+    sheet.style.transition = "none";
+    sheet.style.transform = `translateY(${dy}px)`;
+  };
+
+  const onSheetTouchEnd = (e: React.TouchEvent) => {
+    const sheet = e.currentTarget as HTMLDivElement;
+    const startY = Number(sheet.getAttribute("data-sy") ?? "");
+    sheet.style.transition = "";
+    sheet.style.transform = "";
+    if (!Number.isNaN(startY) && e.changedTouches[0].clientY - startY > 60) {
+      closeAddMenu();
+    }
+    sheet.removeAttribute("data-sy");
+  };
+
+  // Закрытие по Escape (для десктопа)
+  useEffect(() => {
+    if (!isAddMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeAddMenu();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isAddMenuOpen]);
+
+  // ===== Нативный QR-сканер Telegram =====
+  const handleQrReceived = (data?: { data?: string }) => {
+    const receiptUrl = data?.data;
+    if (!receiptUrl) return;
+    // QR получен — закрываем сканер и отписываемся от события
+    telegram?.offEvent("qrTextReceived", handleQrReceived);
+    telegram?.closeScanQrPopup?.();
+    console.log("Scanned receipt URL:", receiptUrl);
+  };
+
+  const startQrScan = () => {
+    closeAddMenu();
+    if (!telegram?.showScanQrPopup) {
+      console.warn("QR-сканер недоступен: откройте Mini App в Telegram");
+      return;
+    }
+    telegram.onEvent("qrTextReceived", handleQrReceived);
+    telegram.showScanQrPopup({ text: "Отсканируйте QR на чеке" });
+  };
+
+  // «Ввести вручную» — та же модалка траты, но без предвыбранной категории
+  const openManualExpense = () => {
+    closeAddMenu();
+    setExpenseCategory(MANUAL_NO_CATEGORY);
+  };
+
   const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal;
 
   return (
@@ -1109,31 +1178,6 @@ useEffect(() => {
               <small style={{ fontSize: '9px' }}>{'\u00A0'}</small>
             </button>
           </section>
-
-          {expenseCategory && (
-            <div 
-              className="modal-backdrop" 
-              onMouseDown={(e) => {
-                if (e.target === e.currentTarget) {
-                  setExpenseCategory(undefined);
-                }
-              }}
-            >
-              <form className="expense-modal expense-modal--plain" onSubmit={addExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                <div className="input-with-operators">
-                  <input name="amount" type="text" inputMode="numeric" placeholder="Amount" required ref={amountInputRef} onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
-                  <div className="operator-bar">
-                    {["+", "-", "*", "/"].map((op) => (
-                      <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
-                    ))}
-                  </div>
-                </div>
-                <input type="hidden" name="categoryId" value={expenseCategory.id} />
-                <input name="description" maxLength={300} placeholder="Description" />
-                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Save"}</button>
-              </form>
-            </div>
-          )}
         </>
       )}
 
@@ -1329,18 +1373,125 @@ useEffect(() => {
         </>
       )}
 
-      <nav aria-label="Основная навигация">
-        {tabItems.map((item) => (
-          <button
-            key={item.id}
-            className={activeTab === item.id ? "active" : ""}
-            onClick={() => setActiveTab(item.id)}
-          >
-            <Icon name={item.icon} />
-            <span>{item.label}</span>
-          </button>
-        ))}
+      <nav className={`floating-tab-bar${expenseCategory ? " tab-bar-hidden" : ""}`} aria-label="Основная навигация">
+        <button
+          type="button"
+          className={activeTab === "categories" ? "active" : ""}
+          onClick={() => {
+            window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
+            setActiveTab("categories");
+          }}
+        >
+          <Icon name="grid" />
+          <span>Категории</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === "chart" ? "active" : ""}
+          onClick={() => {
+            window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
+            setActiveTab("chart");
+          }}
+        >
+          <Icon name="chart" />
+          <span>График</span>
+        </button>
+        <button
+          type="button"
+          className="fab-button"
+          aria-label="Добавить"
+          onClick={openAddMenu}
+        />
+        <button
+          type="button"
+          className={activeTab === "expenses" ? "active" : ""}
+          onClick={() => {
+            window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
+            setActiveTab("expenses");
+          }}
+        >
+          <Icon name="card" />
+          <span>Траты</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === "savings" ? "active" : ""}
+          onClick={() => {
+            window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
+            setActiveTab("savings");
+          }}
+        >
+          <Icon name="goal" />
+          <span>Накопления</span>
+        </button>
       </nav>
+
+      {/* ===== Модалка добавления траты (категория опциональна; доступна с любой вкладки) ===== */}
+      {expenseCategory && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setExpenseCategory(undefined);
+            }
+          }}
+        >
+          <form className="expense-modal expense-modal--plain" onSubmit={addExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+            <div className="input-with-operators">
+              <input name="amount" type="text" inputMode="numeric" placeholder="Amount" required ref={amountInputRef} onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+              <div className="operator-bar">
+                {["+", "-", "*", "/"].map((op) => (
+                  <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
+                ))}
+              </div>
+            </div>
+            <select name="categoryId" value={expenseCategory?.id ?? ""} onChange={(e) => setExpenseCategory(e.target.value === "" ? MANUAL_NO_CATEGORY : (dashboard?.categories.find((c) => c.id === e.target.value) ?? MANUAL_NO_CATEGORY))}>
+              <option value="">Без категории</option>
+              {dashboard?.categories.map((category) => (
+                <option key={category.id} value={category.id}>{category.name}</option>
+              ))}
+            </select>
+            <input name="description" maxLength={300} placeholder="Description" />
+            <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Save"}</button>
+          </form>
+        </div>
+      )}
+
+      {/* ===== iOS Action Sheet: «+» меню ===== */}
+      {isAddMenuOpen && (
+        <div
+          className="add-menu-backdrop"
+          onClick={closeAddMenu}
+          aria-hidden="false"
+          role="presentation"
+        >
+          <div
+            className="add-menu-sheet"
+            role="dialog"
+            aria-label="Добавить трату"
+            onTouchStart={onSheetTouchStart}
+            onTouchMove={onSheetTouchMove}
+            onTouchEnd={onSheetTouchEnd}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="add-menu-grabber" />
+            <button
+              type="button"
+              className="add-menu-item"
+              onClick={startQrScan}
+            >
+              📷 Сканировать QR-код чека
+            </button>
+            <button
+              type="button"
+              className="add-menu-item"
+              onClick={openManualExpense}
+            >
+              ✏️ Ввести вручную
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

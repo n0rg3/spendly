@@ -13,9 +13,15 @@ interface TelegramWebApp {
   expand(): void;
   viewportHeight: number;
   viewportStableHeight: number;
-  onEvent: (eventType: string, callback: () => void) => void;
-  offEvent: (eventType: string, callback: () => void) => void;
+  onEvent: (eventType: string, callback: (data?: { data?: string }) => void) => void;
+  offEvent: (eventType: string, callback: (data?: { data?: string }) => void) => void;
   disableVerticalSwipes: () => void;
+  enableClosingConfirmation: () => void;
+  showScanQrPopup?: (options: { text?: string }) => void;
+  closeScanQrPopup?: () => void;
+  HapticFeedback?: {
+    impactOccurred: (style: "light" | "medium" | "heavy" | "rigid" | "soft") => void;
+  };
 }
 
 interface Window {
