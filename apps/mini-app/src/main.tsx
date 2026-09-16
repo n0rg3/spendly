@@ -94,10 +94,10 @@ function currentMonthKey() {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// "12.03.2026 14:32" (формат сербских чеков) -> ISO
+// "16.9.2026. 17:50:44" (формат сербских чеков, месяц/день могут быть однозначными) -> ISO
 function receiptDateToIso(value: string | null): string | null {
   if (!value) return null;
-  const match = value.match(/(\d{2})\.(\d{2})\.(\d{4})\.?\s+(\d{2}):(\d{2})/);
+  const match = value.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})\.?\s+(\d{1,2}):(\d{2})/);
   if (!match) return null;
   const [, day, month, year, hours, minutes] = match;
   const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes));
@@ -920,10 +920,10 @@ useEffect(() => {
         body: JSON.stringify({ qrUrl: receiptUrl }),
       });
 
-      const payload = (await response.json()) as { error?: string; dateTime?: string | null; items?: { name: string; qty: number; price: number; total: number; category: string | null }[]; total?: number };
+      const payload = (await response.json().catch(() => null)) as { error?: string; dateTime?: string | null; items?: { name: string; qty: number; price: number; total: number; category: string | null }[]; total?: number } | null;
 
-      if (!response.ok || !payload.items) {
-        throw new Error(payload.error || "Не удалось разобрать чек");
+      if (!response.ok || !payload || !payload.items) {
+        throw new Error(payload?.error || "Не удалось разобрать чек. Проверь подключение к API.");
       }
 
       setParsedReceipt({

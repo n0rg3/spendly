@@ -521,30 +521,34 @@ function parseSerbianNumber(raw: string): number {
 function parseReceiptHtml(html: string): ParsedReceipt {
   const $ = cheerio.load(html);
 
-  // Дата и время покупки: приоритетно #sdcDateTime, затем поиск по тексту
-  let dateTime: string | null = $("#sdcDateTime").text().trim() || null;
+  // Дата и время покупки: приоритетно #sdcDateTimeLabel, затем #sdcDateTime, затем поиск по тексту
+  let dateTime: string | null = $("#sdcDateTimeLabel").text().trim() || $("#sdcDateTime").text().trim() || null;
   if (!dateTime) {
     const bodyText = $("body").text();
-    const dateMatch = bodyText.match(/\d{2}\.\d{2}\.\d{4}\.?\s+\d{2}:\d{2}(?::\d{2})?/);
+    const dateMatch = bodyText.match(/\d{1,2}\.\d{1,2}\.\d{4}\.?\s+\d{1,2}:\d{2}(?::\d{2})?/);
     dateTime = dateMatch ? dateMatch[0] : null;
   }
 
-  // Товары: строки таблицы чека (4+ ячеек: наименование, кол-во, цена, сумма)
+  // Числа в тексте чека заканчиваются сербским десятичным: "134,99" (или "1.234,56")
+  const looksLikeNumber = (value: string): boolean => /^[\d.,]+$/.test(value) && /\d/.test(value);
+
   const items: ReceiptItem[] = [];
-  $("table tr").each((_, row) => {
+
+  // Способ 1: строки таблицы спецификации (если Knockout отрендерил их на сервере)
+  $("table.invoice-table tr, table.invoice-table tbody tr").each((_, row) => {
     const cells = $(row)
-      .find("td, th")
+      .find("td")
       .map((__, cell) => $(cell).text().trim())
       .get();
 
     if (cells.length < 4) return;
-    const totalRaw = cells[cells.length - 1] ?? "";
-    const qtyRaw = cells[cells.length - 3] ?? "";
-    const priceRaw = cells[cells.length - 2] ?? "";
+    const totalRaw = cells[3] ?? "";
+    const qtyRaw = cells[1] ?? "";
+    const priceRaw = cells[2] ?? "";
     const name = cells[0] ?? "";
 
     const total = parseSerbianNumber(totalRaw);
-    if (!Number.isFinite(total)) return; // строка заголовка или разделитель
+    if (!Number.isFinite(total)) return;
 
     const qty = parseSerbianNumber(qtyRaw);
     const price = parseSerbianNumber(priceRaw);
@@ -557,16 +561,64 @@ function parseReceiptHtml(html: string): ParsedReceipt {
     });
   });
 
-  // Fallback: некоторые версии страницы отдают товары не таблицей, а строками
+  // Способ 2 (основной на практике): текстовый дамп кассового чека в <pre> (панель #collapse3).
+  // Статический HTML отдаёт таблицу товаров пустой (её рендерит Knockout.js на клиенте),
+  // но дамп содержит строки вида "BOMBONE HARIBO STAR MIX  KOM (Ђ)\n 134,99 1 134,99"
+  // (название, цена за ед., количество, итог) между заголовком "Назив Цена Кол. Укупно"
+  // и строкой "Укупан износ".
   if (items.length === 0) {
-    $(".item-row, .receipt-item").each((_, el) => {
-      const text = $(el).text().trim();
-      const totalMatch = text.match(/([\d.,]+)\s*(?:RSD|дин\.|din\.|Дин\.|дин)?\s*$/i);
-      const total = totalMatch ? parseSerbianNumber(totalMatch[1] ?? "") : NaN;
+    const receiptText = $("#collapse3 pre").text() || $("#PrintInvoice").text() || $("body").text();
+    const lines = receiptText.split("\n").map((line) => line.trim()).filter(Boolean);
+
+    let inItems = false;
+    let pendingName = "";
+
+    const pushItem = (name: string, priceRaw: string, qtyRaw: string, totalRaw: string) => {
+      const total = parseSerbianNumber(totalRaw);
+      const price = parseSerbianNumber(priceRaw);
+      const qty = parseSerbianNumber(qtyRaw);
       if (!Number.isFinite(total) || total <= 0) return;
-      const name = text.replace(/[\d.,]+\s*(?:RSD|дин\.|din\.|Дин\.|дин)?\s*$/i, "").trim();
-      items.push({ name, qty: 1, price: total, total });
-    });
+      items.push({
+        name: name.trim(),
+        qty: Number.isFinite(qty) ? qty : 1,
+        price: Number.isFinite(price) ? price : total,
+        total,
+      });
+    };
+
+    for (const line of lines) {
+      if (!inItems) {
+        // Заголовок секции товаров: "Назив Цена Кол. Укупно" (или англ. "Name Price Qty Total")
+        if (/Назив|Name/i.test(line) && /Цена|Price/i.test(line)) {
+          inItems = true;
+        }
+        continue;
+      }
+
+      // Конец секции товаров
+      if (/Укупан износ|Total amount|Порез|Tax/i.test(line)) break;
+      if (/^-{3,}|={3,}/.test(line)) continue;
+
+      // Строка из трёх чисел: "<цена> <кол-во> <итог>" (название может быть на предыдущей строке)
+      const numbersMatch = line.match(/^([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)$/);
+      if (numbersMatch && looksLikeNumber(numbersMatch[1] || "") && looksLikeNumber(numbersMatch[2] || "") && looksLikeNumber(numbersMatch[3] || "")) {
+        const name = pendingName || line;
+        pushItem(name, numbersMatch[1] || "", numbersMatch[2] || "", numbersMatch[3] || "");
+        pendingName = "";
+        continue;
+      }
+
+      // Строка в одну строку: "<название> <цена> <кол-во> <итог>"
+      const itemMatch = line.match(/^(.+?)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)$/);
+      if (itemMatch && looksLikeNumber(itemMatch[2] || "") && looksLikeNumber(itemMatch[3] || "") && looksLikeNumber(itemMatch[4] || "")) {
+        pushItem(itemMatch[1] || "", itemMatch[2] || "", itemMatch[3] || "", itemMatch[4] || "");
+        pendingName = "";
+        continue;
+      }
+
+      // Иначе — продолжение/начало названия товара
+      pendingName = pendingName ? `${pendingName} ${line}` : line;
+    }
   }
 
   return { dateTime, items, total: items.reduce((sum, item) => sum + item.total, 0) };
