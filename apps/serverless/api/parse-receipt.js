@@ -1,7 +1,7 @@
 // ===== Vercel Serverless: парсинг сербских чеков (suf.purs.gov.rs) + Gemini-категоризация =====
 // Деплой: vercel из этой папки (apps/serverless). Эндпоинт: POST /api/receipts/parse
 // (алиас на /api/parse-receipt через vercel.json rewrites).
-// Env: GEMINI_API_KEY, GEMINI_MODEL (по умолчанию gemini-2.0-flash),
+// Env: GEMINI_API_KEY, GEMINI_MODEL (по умолчанию gemini-3.6-flash),
 //      ALLOWED_ORIGINS (опционально, через запятую — дополнительные CORS-источники).
 import * as cheerio from "cheerio";
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -10,6 +10,9 @@ const RECEIPT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 const DEFAULT_CATEGORIES = ["Продукты", "Кафе", "Дом", "Транспорт", "Развлечения", "Другое"];
+
+// Актуальная модель Gemini (gemini-2.0-flash снята с поддержки — API отвечает 404)
+const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
 
 // --- CORS: GitHub Pages + localhost + доп. источники из env ---
 function corsHeaders(origin) {
@@ -162,29 +165,39 @@ async function categorizeReceiptItems(items, categoriesList) {
     `Товары: ${JSON.stringify(items)}`,
   ].join("\n");
 
-  try {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    // GEMINI_BASE_URL — опциональный override (используется в тестах/прокси); в production не нужен
-    const model = genAI.getGenerativeModel(
-      {
-        model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
-        generationConfig: { temperature: 0, responseMimeType: "application/json" },
-      },
-      process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : undefined,
-    );
+  // Модель из env, иначе актуальный дефолт. Если модель снята с поддержки (404),
+  // пробуем рекомендованную — автокатегоризация не отвалится при deprecation.
+  const models = [...new Set([process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL, DEFAULT_GEMINI_MODEL])];
+  const allowed = new Set(categoriesList);
+  let lastError;
 
-    const result = await model.generateContent(prompt);
-    const parsed = JSON.parse(result.response.text() || "[]");
-    const allowed = new Set(categoriesList);
+  for (const modelName of models) {
+    try {
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      // GEMINI_BASE_URL — опциональный override (используется в тестах/прокси); в production не нужен
+      const model = genAI.getGenerativeModel(
+        {
+          model: modelName,
+          generationConfig: { temperature: 0, responseMimeType: "application/json" },
+        },
+        process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : undefined,
+      );
 
-    return items.map((item, index) => {
-      const aiCategory = typeof parsed[index]?.category === "string" ? parsed[index].category : null;
-      return { ...item, category: aiCategory && allowed.has(aiCategory) ? aiCategory : null };
-    });
-  } catch (error) {
-    console.error("Gemini categorization failed:", error);
-    return items.map((item) => ({ ...item, category: null }));
+      const result = await model.generateContent(prompt);
+      const parsed = JSON.parse(result.response.text() || "[]");
+
+      return items.map((item, index) => {
+        const aiCategory = typeof parsed[index]?.category === "string" ? parsed[index].category : null;
+        return { ...item, category: aiCategory && allowed.has(aiCategory) ? aiCategory : null };
+      });
+    } catch (error) {
+      lastError = error;
+      console.error(`Gemini model "${modelName}" failed:`, error instanceof Error ? error.message : error);
+    }
   }
+
+  console.error("Gemini categorization failed for all models:", lastError instanceof Error ? lastError.message : lastError);
+  return items.map((item) => ({ ...item, category: null }));
 }
 
 // --- Vercel handler ---

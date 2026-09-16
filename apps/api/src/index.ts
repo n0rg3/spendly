@@ -649,7 +649,7 @@ function parseReceiptHtml(html: string): ParsedReceipt {
 type CategorizedReceiptItem = ReceiptItem & { category: string | null };
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
 const appLog = app.log;
 
