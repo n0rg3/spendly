@@ -6,6 +6,7 @@ dist
 coverage
 .next
 .vscode/settings.json
+.vercel
 
 # Firebase service account keys (чувствительные данные)
 firebase-admin.json

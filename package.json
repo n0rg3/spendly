@@ -6,6 +6,8 @@
     "dev": "turbo run dev",
     "dev:bot": "turbo run dev --filter=@sp3ndly/bot",
     "dev:web": "turbo run dev --filter=@sp3ndly/mini-app",
+    "deploy:serverless": "pnpm --filter @sp3ndly/serverless deploy",
+    "dev:serverless": "pnpm --filter @sp3ndly/serverless dev",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types"

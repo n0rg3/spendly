@@ -104,8 +104,29 @@ async function getOrCreateDashboard(telegramId: string): Promise<{ id: string; t
 
 const app = Fastify({ logger: true });
 
-// CORS: мини-апп может хоститься отдельно от API (например фронт на github.io -> API через ngrok)
-await app.register(cors, { origin: true });
+// CORS: разрешённые источники для мини-аппа (GitHub Pages, локальная разработка,
+// ngrok-туннели — задаются через CORS_ORIGINS через запятую)
+const allowedOrigins = [
+  "https://n0rg3.github.io",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  ...(process.env.CORS_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+];
+
+await app.register(cors, {
+  origin: (origin, callback) => {
+    // Запросы без Origin (curl, мобильный клиент, сервер-сервер) — разрешаем
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    app.log.warn({ origin }, "Blocked by CORS");
+    callback(new Error("Origin not allowed by CORS"), false);
+  },
+});
 
 app.get("/api/health", async () => ({ ok: true }));
 

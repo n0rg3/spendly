@@ -908,22 +908,48 @@ useEffect(() => {
     setIsReceiptLoading(true);
     setReceiptError(undefined);
     try {
-      // Локальный API (apps/api) — тот же origin в dev, иначе VITE_API_URL
-      const apiUrl = import.meta.env.VITE_API_URL || "";
+      // --- Адрес API (serverless-функция на Vercel) ---
+      // VITE_API_URL задаётся при сборке (см. apps/mini-app/.env):
+      //   production (GitHub Pages): https://<project>.vercel.app
+      //   dev: пусто -> vite проксирует /api -> http://localhost:3001
+      // Клиент НИКОГДА не обращается к localhost, если открыт не на localhost.
+      const isLocalPage = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+      const apiUrl = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
+
+      if (!apiUrl) {
+        if (!isLocalPage) {
+          throw new Error(
+            "API не настроен: задай VITE_API_URL (адрес serverless-функции, напр. https://<project>.vercel.app) и пересобери приложение",
+          );
+        }
+      } else if (/change-me|your-app|example\.com/i.test(apiUrl)) {
+        throw new Error(`API не настроен: VITE_API_URL всё ещё содержит заглушку (${apiUrl})`);
+      } else if (!isLocalPage && /^(https?:\/\/)?(localhost|127\.0\.0\.1)/i.test(apiUrl)) {
+        throw new Error(`Некорректный VITE_API_URL (${apiUrl}): на GitHub Pages нельзя обращаться к localhost`);
+      }
+
+      if (!apiUrl) {
+        console.info("[receipt] VITE_API_URL пуст — dev-режим, запрос через vite-прокси /api -> localhost:3001");
+      }
+
       const response = await fetch(`${apiUrl}/api/receipts/parse`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          // Обход interstitial-страницы ngrok Free ("Visit site") для не-браузерных клиентов
+          // Совместимость, если VITE_API_URL указывает на ngrok Free (interstitial-страница).
+          // На Vercel-функции заголовок просто игнорируется.
           "ngrok-skip-browser-warning": "true",
         },
-        body: JSON.stringify({ qrUrl: receiptUrl }),
+        // categories — названия категорий пользователя, чтобы Gemini вернул их же
+        // (если не передать, функция использует дефолтный список из ТЗ)
+        body: JSON.stringify({ qrUrl: receiptUrl, categories: dashboard?.categories.map((c) => c.name) }),
       });
 
       const payload = (await response.json().catch(() => null)) as { error?: string; dateTime?: string | null; items?: { name: string; qty: number; price: number; total: number; category: string | null }[]; total?: number } | null;
 
       if (!response.ok || !payload || !payload.items) {
-        throw new Error(payload?.error || "Не удалось разобрать чек. Проверь подключение к API.");
+        console.error("API Error Details:", { status: response.status, statusText: response.statusText, url: response.url, payload });
+        throw new Error(payload?.error || `Ошибка API: HTTP ${response.status}`);
       }
 
       setParsedReceipt({
@@ -932,6 +958,8 @@ useEffect(() => {
         total: payload.total ?? payload.items.reduce((sum, item) => sum + item.total, 0),
       });
     } catch (error) {
+      console.error("API Error Details:", error);
+      console.error("API Error Message:", error instanceof Error ? error.message : String(error));
       setReceiptError(error instanceof Error ? error.message : "Ошибка загрузки чека");
     } finally {
       setIsReceiptLoading(false);
