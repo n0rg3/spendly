@@ -914,3 +914,98 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   background: var(--hint-color);
   opacity: 0.55;
 }
+
+/* ===== Парсинг чека: лоадер и модалка подтверждения ===== */
+.receipt-backdrop { align-items: center; justify-content: center; }
+
+.receipt-loader {
+  display: grid;
+  gap: 10px;
+  padding: 28px 34px;
+  border-radius: 16px;
+  text-align: center;
+  background: var(--secondary-bg-color);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+}
+
+.receipt-loader p { margin: 0; font-size: 15px; font-weight: 650; }
+.receipt-loader small { color: var(--hint-color); }
+
+.receipt-spinner {
+  display: inline-block;
+  width: 34px;
+  height: 34px;
+  margin: 0 auto;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--link-color);
+  border-radius: 50%;
+  animation: receipt-spin 0.8s linear infinite;
+}
+
+@keyframes receipt-spin { to { transform: rotate(360deg); } }
+
+.receipt-modal { max-height: 80dvh; display: flex; flex-direction: column; gap: 12px; }
+
+.receipt-modal-header { display: grid; gap: 4px; text-align: center; }
+.receipt-modal-header small { color: var(--hint-color); }
+
+.receipt-items {
+  display: grid;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.receipt-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--secondary-bg-color) 60%, var(--border-color));
+  transition: opacity 0.2s ease;
+}
+
+.receipt-item input[type="checkbox"] { margin-top: 3px; accent-color: var(--link-color); }
+.receipt-item--off { opacity: 0.45; }
+.receipt-item-info { display: grid; gap: 6px; flex: 1; min-width: 0; }
+.receipt-item-info strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.receipt-item-info small { color: var(--hint-color); font-size: 11px; }
+
+.receipt-item-controls { display: flex; gap: 6px; }
+.receipt-item-controls input,
+.receipt-item-controls select {
+  min-width: 0;
+  padding: 7px 9px;
+  border-radius: 9px;
+  border: 1px solid var(--border-color);
+  background: var(--secondary-bg-color);
+  font-size: 12px;
+  color: var(--text-color);
+}
+
+.receipt-amount-input { width: 92px; flex: none; text-align: right; }
+.receipt-item-controls select { flex: 1; }
+
+.receipt-date {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--link-color) 10%, transparent);
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--link-color);
+}
+
+.receipt-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--link-color) 12%, transparent);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.receipt-error-text { margin: 0 0 8px; text-align: center; font-size: 14px; }

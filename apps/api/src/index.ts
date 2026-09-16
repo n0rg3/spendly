@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyRequest } from "fastify";
+import cors from "@fastify/cors";
+import * as cheerio from "cheerio";
 import { firestore } from "./firebase.js";
 
 type Category = { id: string; name: string; icon: string | null; color: string | null };
@@ -101,6 +103,9 @@ async function getOrCreateDashboard(telegramId: string): Promise<{ id: string; t
 }
 
 const app = Fastify({ logger: true });
+
+// CORS: мини-апп может хоститься отдельно от API (например фронт на github.io -> API через ngrok)
+await app.register(cors, { origin: true });
 
 app.get("/api/health", async () => ({ ok: true }));
 
@@ -494,6 +499,198 @@ app.patch<{
   await userDocRef.set(updated);
 
   return updatedExpenses.find((e) => e.id === request.params.id);
+});
+
+// ===== Парсинг сербских e-чеков (suf.purs.gov.rs) =====
+type ReceiptItem = { name: string; qty: number; price: number; total: number };
+type ParsedReceipt = { dateTime: string | null; items: ReceiptItem[]; total: number };
+
+const RECEIPT_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+// Числа в сербском формате: 1.234,56 (точка — тысячи, запятая — дробная часть)
+function parseSerbianNumber(raw: string): number {
+  const cleaned = raw.replace(/[^\d.,-]/g, "").trim();
+  if (!cleaned) return NaN;
+  const normalized = cleaned.includes(",")
+    ? cleaned.replace(/\./g, "").replace(",", ".")
+    : cleaned.replace(/,/g, "");
+  return Number.parseFloat(normalized);
+}
+
+function parseReceiptHtml(html: string): ParsedReceipt {
+  const $ = cheerio.load(html);
+
+  // Дата и время покупки: приоритетно #sdcDateTime, затем поиск по тексту
+  let dateTime: string | null = $("#sdcDateTime").text().trim() || null;
+  if (!dateTime) {
+    const bodyText = $("body").text();
+    const dateMatch = bodyText.match(/\d{2}\.\d{2}\.\d{4}\.?\s+\d{2}:\d{2}(?::\d{2})?/);
+    dateTime = dateMatch ? dateMatch[0] : null;
+  }
+
+  // Товары: строки таблицы чека (4+ ячеек: наименование, кол-во, цена, сумма)
+  const items: ReceiptItem[] = [];
+  $("table tr").each((_, row) => {
+    const cells = $(row)
+      .find("td, th")
+      .map((__, cell) => $(cell).text().trim())
+      .get();
+
+    if (cells.length < 4) return;
+    const totalRaw = cells[cells.length - 1] ?? "";
+    const qtyRaw = cells[cells.length - 3] ?? "";
+    const priceRaw = cells[cells.length - 2] ?? "";
+    const name = cells[0] ?? "";
+
+    const total = parseSerbianNumber(totalRaw);
+    if (!Number.isFinite(total)) return; // строка заголовка или разделитель
+
+    const qty = parseSerbianNumber(qtyRaw);
+    const price = parseSerbianNumber(priceRaw);
+
+    items.push({
+      name,
+      qty: Number.isFinite(qty) ? qty : 1,
+      price: Number.isFinite(price) ? price : total,
+      total,
+    });
+  });
+
+  // Fallback: некоторые версии страницы отдают товары не таблицей, а строками
+  if (items.length === 0) {
+    $(".item-row, .receipt-item").each((_, el) => {
+      const text = $(el).text().trim();
+      const totalMatch = text.match(/([\d.,]+)\s*(?:RSD|дин\.|din\.|Дин\.|дин)?\s*$/i);
+      const total = totalMatch ? parseSerbianNumber(totalMatch[1] ?? "") : NaN;
+      if (!Number.isFinite(total) || total <= 0) return;
+      const name = text.replace(/[\d.,]+\s*(?:RSD|дин\.|din\.|Дин\.|дин)?\s*$/i, "").trim();
+      items.push({ name, qty: 1, price: total, total });
+    });
+  }
+
+  return { dateTime, items, total: items.reduce((sum, item) => sum + item.total, 0) };
+}
+
+// ===== Автокатегоризация позиций чека через Gemini =====
+type CategorizedReceiptItem = ReceiptItem & { category: string | null };
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+
+const appLog = app.log;
+
+async function categorizeReceiptItems(items: ReceiptItem[], categoriesList: string[]): Promise<CategorizedReceiptItem[]> {
+  // Без товаров категоризировать нечего
+  if (items.length === 0) return [];
+
+  // Нет ключа или списка категорий — возвращаем позиции с category: null
+  if (!GEMINI_API_KEY || categoriesList.length === 0) {
+    return items.map((item) => ({ ...item, category: null }));
+  }
+
+  const prompt = [
+    "You are a receipt item categorizer. Assign each item to exactly one category from the provided list.",
+    "If no category fits, use null.",
+    "Respond with STRICT JSON only — no markdown, no explanations, no extra text.",
+    "The response must be a JSON array in this exact format:",
+    '[{ "name": "MLEKO 2.8%", "qty": 1, "price": 150, "total": 150, "category": "Продукты" }]',
+    `Available categories: ${JSON.stringify(categoriesList)}`,
+    `Items: ${JSON.stringify(items)}`,
+  ].join("\n");
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0, responseMimeType: "application/json" },
+        }),
+        signal: AbortSignal.timeout(20_000),
+      },
+    );
+
+    if (!response.ok) {
+      appLog.warn({ status: response.status }, "Gemini categorization HTTP error");
+      return items.map((item) => ({ ...item, category: null }));
+    }
+
+    const payload = (await response.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    const raw = payload.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+
+    const parsed = JSON.parse(raw) as { category?: string }[];
+    const allowed = new Set(categoriesList);
+
+    // Мержим категории от LLM к исходным позициям; нераспознанные ответы — null
+    return items.map((item, index) => {
+      const aiItem = parsed[index];
+      const aiCategory = typeof aiItem?.category === "string" ? aiItem.category : null;
+      return {
+        ...item,
+        category: aiCategory && allowed.has(aiCategory) ? aiCategory : null,
+      };
+    });
+  } catch (error) {
+    appLog.error(error, "Gemini categorization failed");
+    return items.map((item) => ({ ...item, category: null }));
+  }
+}
+
+app.post<{ Body: { qrUrl?: string } }>("/api/receipts/parse", async (request, reply) => {
+  const qrUrl = request.body?.qrUrl?.trim();
+  if (!qrUrl) {
+    return reply.code(400).send({ error: "Передайте URL чека из QR-кода (qrUrl)" });
+  }
+
+  // Валидация URL: только https и только домен налоговой Сербии
+  let url: URL;
+  try {
+    url = new URL(qrUrl);
+  } catch {
+    return reply.code(400).send({ error: "Некорректный URL чека" });
+  }
+  if (url.protocol !== "https:" || !/^(?:[a-z0-9-]+\.)*purs\.gov\.rs$/.test(url.hostname)) {
+    return reply.code(400).send({ error: "URL должен вести на suf.purs.gov.rs (сербский e-чек)" });
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { "User-Agent": RECEIPT_USER_AGENT },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    request.log.error(error, "Failed to fetch receipt page");
+    return reply.code(502).send({ error: "Сайт чека недоступен, попробуйте позже" });
+  }
+
+  if (!response.ok) {
+    return reply.code(502).send({ error: `Сайт чека вернул ошибку: HTTP ${response.status}` });
+  }
+
+  const html = await response.text();
+  const receipt = parseReceiptHtml(html);
+
+  if (!receipt.dateTime && receipt.items.length === 0) {
+    return reply.code(422).send({ error: "Не удалось распознать структуру чека" });
+  }
+
+  // Автокатегоризация позиций по категориям пользователя
+  const categorizedItems = await categorizeReceiptItems(
+    receipt.items,
+    request.dashboard.categories.map((c) => c.name),
+  );
+
+  return reply.send({
+    dateTime: receipt.dateTime,
+    items: categorizedItems,
+    total: receipt.total,
+  });
 });
 
 declare module "fastify" {

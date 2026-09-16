@@ -40,7 +40,7 @@ type Category = {
   color: string | null;
   budgets?: Record<string, number>; // { "2026-07": 5000 }
 };
-type Expense = { id: string; amount: number; description: string | null; createdAt: string; category: Category | null };
+type Expense = { id: string; amount: number; description: string | null; createdAt: string; category: Category | null; qty?: number; unitPrice?: number };
 type SavingsGoal = {
   id: string;
   name: string;
@@ -92,6 +92,16 @@ function toLocalDateTime(value: string) {
 function currentMonthKey() {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// "12.03.2026 14:32" (формат сербских чеков) -> ISO
+function receiptDateToIso(value: string | null): string | null {
+  if (!value) return null;
+  const match = value.match(/(\d{2})\.(\d{2})\.(\d{4})\.?\s+(\d{2}):(\d{2})/);
+  if (!match) return null;
+  const [, day, month, year, hours, minutes] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function formatMonth(value: string) {
@@ -885,14 +895,128 @@ useEffect(() => {
     return () => document.removeEventListener("keydown", onKey);
   }, [isAddMenuOpen]);
 
-  // ===== Нативный QR-сканер Telegram =====
+  // ===== Нативный QR-сканер Telegram + парсинг чека =====
+  const [isReceiptLoading, setIsReceiptLoading] = useState(false);
+  const [parsedReceipt, setParsedReceipt] = useState<{
+    dateTime: string | null;
+    items: { name: string; qty: number; price: number; total: number; category: string | null }[];
+    total: number;
+  }>();
+  const [receiptError, setReceiptError] = useState<string>();
+
+  const parseReceipt = async (receiptUrl: string) => {
+    setIsReceiptLoading(true);
+    setReceiptError(undefined);
+    try {
+      // Локальный API (apps/api) — тот же origin в dev, иначе VITE_API_URL
+      const apiUrl = import.meta.env.VITE_API_URL || "";
+      const response = await fetch(`${apiUrl}/api/receipts/parse`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          // Обход interstitial-страницы ngrok Free ("Visit site") для не-браузерных клиентов
+          "ngrok-skip-browser-warning": "true",
+        },
+        body: JSON.stringify({ qrUrl: receiptUrl }),
+      });
+
+      const payload = (await response.json()) as { error?: string; dateTime?: string | null; items?: { name: string; qty: number; price: number; total: number; category: string | null }[]; total?: number };
+
+      if (!response.ok || !payload.items) {
+        throw new Error(payload.error || "Не удалось разобрать чек");
+      }
+
+      setParsedReceipt({
+        dateTime: payload.dateTime ?? null,
+        items: payload.items,
+        total: payload.total ?? payload.items.reduce((sum, item) => sum + item.total, 0),
+      });
+    } catch (error) {
+      setReceiptError(error instanceof Error ? error.message : "Ошибка загрузки чека");
+    } finally {
+      setIsReceiptLoading(false);
+    }
+  };
+
   const handleQrReceived = (data?: { data?: string }) => {
     const receiptUrl = data?.data;
     if (!receiptUrl) return;
     // QR получен — закрываем сканер и отписываемся от события
     telegram?.offEvent("qrTextReceived", handleQrReceived);
     telegram?.closeScanQrPopup?.();
-    console.log("Scanned receipt URL:", receiptUrl);
+    void parseReceipt(receiptUrl);
+  };
+
+  // Черновики позиций чека: сумма и категория, отредактированные вручную
+  const [receiptDrafts, setReceiptDrafts] = useState<Record<number, { amount: number; categoryId: string }>>({});
+  // Какие позиции чека включать в трату (по умолчанию — все)
+  const [receiptExcluded, setReceiptExcluded] = useState<Set<number>>(new Set());
+
+  const setReceiptDraft = (index: number, patch: Partial<{ amount: number; categoryId: string }>) => {
+    setReceiptDrafts((prev) => ({ ...prev, [index]: { ...(prev[index] ?? { amount: 0, categoryId: "" }), ...patch } }));
+  };
+
+  const toggleReceiptItem = (index: number) => {
+    setReceiptExcluded((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+
+  const closeReceipt = () => {
+    setParsedReceipt(undefined);
+    setReceiptExcluded(new Set());
+    setReceiptDrafts({});
+    setReceiptError(undefined);
+  };
+
+  const receiptItemAmount = (index: number) => receiptDrafts[index]?.amount ?? parsedReceipt?.items[index]?.total ?? 0;
+  const receiptItemCategoryId = (index: number) => {
+    const draftId = receiptDrafts[index]?.categoryId;
+    if (draftId !== undefined) return draftId;
+    const aiName = parsedReceipt?.items[index]?.category;
+    return dashboard?.categories.find((c) => c.name === aiName)?.id ?? "";
+  };
+
+  // «Сохранить все траты»: создаёт отдельную трату на каждую выбранную позицию
+  const confirmReceipt = async () => {
+    if (!parsedReceipt || !dashboard) return;
+
+    const includedIndexes = parsedReceipt.items
+      .map((_, index) => index)
+      .filter((index) => !receiptExcluded.has(index));
+    if (includedIndexes.length === 0) return;
+
+    const createdAt = receiptDateToIso(parsedReceipt.dateTime) || new Date().toISOString();
+
+    const newExpenses: Expense[] = includedIndexes.map((index, order) => {
+      const item = parsedReceipt.items[index];
+      const categoryId = receiptItemCategoryId(index);
+      const category = dashboard.categories.find((c) => c.id === categoryId) || null;
+      return {
+        id: `${Date.now()}-${order}`,
+        amount: receiptItemAmount(index),
+        description: item.name,
+        createdAt,
+        category,
+        qty: item.qty,
+        unitPrice: item.price,
+      };
+    });
+
+    try {
+      const allExpenses = [...newExpenses, ...dashboard.expenses];
+      await saveToFirebase({
+        ...dashboard,
+        expenses: allExpenses,
+        totalSpent: allExpenses.reduce((sum, e) => sum + e.amount, 0),
+      });
+      closeReceipt();
+    } catch {
+      setReceiptError("Не удалось сохранить траты из чека");
+    }
   };
 
   const startQrScan = () => {
@@ -911,7 +1035,7 @@ useEffect(() => {
     setExpenseCategory(MANUAL_NO_CATEGORY);
   };
 
-  const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal;
+  const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal || isReceiptLoading || parsedReceipt;
 
   return (
     <main className={isModalOpen ? "modal-open" : ""} onClick={() => { setShowMonthPicker(false); setIconPickerOpen(false); }}>
@@ -1453,6 +1577,106 @@ useEffect(() => {
             </select>
             <input name="description" maxLength={300} placeholder="Description" />
             <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Save"}</button>
+          </form>
+        </div>
+      )}
+
+      {/* ===== Лоадер парсинга чека ===== */}
+      {isReceiptLoading && (
+        <div className="modal-backdrop receipt-backdrop">
+          <div className="receipt-loader">
+            <span className="receipt-spinner" />
+            <p>Распознаём чек…</p>
+            <small>Это займёт несколько секунд</small>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Ошибка парсинга чека ===== */}
+      {receiptError && !isReceiptLoading && (
+        <div className="modal-backdrop" onClick={() => setReceiptError(undefined)}>
+          <div className="expense-modal expense-modal--plain" onClick={(e) => e.stopPropagation()}>
+            <p className="receipt-error-text">{receiptError}</p>
+            <button type="button" onClick={() => setReceiptError(undefined)}>Понятно</button>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Модалка подтверждения транзакций из чека ===== */}
+      {parsedReceipt && !isReceiptLoading && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeReceipt();
+          }}
+        >
+          <form
+            className="expense-modal expense-modal--plain receipt-modal"
+            onSubmit={(e) => { e.preventDefault(); void confirmReceipt(); }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="receipt-modal-header">
+              <b>Чек</b>
+              {parsedReceipt.dateTime && <span className="receipt-date">🗓 {parsedReceipt.dateTime}</span>}
+              <small>Отметьте нужные позиции, поправьте суммы и категории</small>
+            </div>
+
+            <div className="receipt-items">
+              {parsedReceipt.items.map((item, index) => {
+                const included = !receiptExcluded.has(index);
+                return (
+                  <div key={`${item.name}-${index}`} className={`receipt-item${included ? "" : " receipt-item--off"}`}>
+                    <input
+                      type="checkbox"
+                      checked={included}
+                      onChange={() => toggleReceiptItem(index)}
+                    />
+                    <div className="receipt-item-info">
+                      <strong>{item.name}</strong>
+                      <small>{item.qty} × {formatMoney(item.price)}</small>
+                      <div className="receipt-item-controls">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className="receipt-amount-input"
+                          defaultValue={String(item.total)}
+                          onFocus={(e) => { operatorInputRef.current = e.currentTarget; }}
+                          onChange={(e) => setReceiptDraft(index, { amount: evaluateExpression(e.target.value) })}
+                          placeholder={String(item.total)}
+                          aria-label={`Сумма позиции ${item.name}`}
+                        />
+                        <select
+                          value={receiptItemCategoryId(index)}
+                          onChange={(e) => setReceiptDraft(index, { categoryId: e.target.value })}
+                          aria-label={`Категория позиции ${item.name}`}
+                        >
+                          <option value="">Без категории</option>
+                          {dashboard?.categories.map((category) => (
+                            <option key={category.id} value={category.id}>{category.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {parsedReceipt.items.length === 0 && (
+                <p className="empty">В чеке не найдено позиций.</p>
+              )}
+            </div>
+
+            <div className="receipt-total">
+              <span>Итого</span>
+              <b>{formatMoney(parsedReceipt.items.reduce((sum, _, index) => receiptExcluded.has(index) ? sum : sum + (receiptItemAmount(index) || 0), 0))}</b>
+            </div>
+
+            <div className="button-row">
+              <button type="submit" disabled={isSubmitting || parsedReceipt.items.length === receiptExcluded.size}>
+                {isSubmitting ? "Сохраняю…" : "Сохранить все траты"}
+              </button>
+              <button type="button" className="danger-button" onClick={closeReceipt}>Отмена</button>
+            </div>
           </form>
         </div>
       )}
