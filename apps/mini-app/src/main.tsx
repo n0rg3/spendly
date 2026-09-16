@@ -1373,7 +1373,7 @@ useEffect(() => {
         </>
       )}
 
-      <nav className={`floating-tab-bar${expenseCategory ? " tab-bar-hidden" : ""}`} aria-label="Основная навигация">
+      <nav className={`floating-tab-bar${isModalOpen ? " tab-bar-hidden" : ""}`} aria-label="Основная навигация">
         <button
           type="button"
           className={activeTab === "categories" ? "active" : ""}
