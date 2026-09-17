@@ -1,10 +1,10 @@
 // apps/mini-app/src/App.tsx
-import { StrictMode, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Component, StrictMode, useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type FormEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import * as LucideIcons from "lucide-react";
 import { collection, doc, setDoc, getDoc, deleteDoc, onSnapshot, query, orderBy } from "firebase/firestore";
 import { QRCodeSVG } from "qrcode.react";
-import Barcode from "react-barcode";
+import Barcode, { type BarcodeProps } from "react-barcode";
 import { db } from "./firebase";
 import "./styles.css";
 
@@ -23,10 +23,9 @@ function lockAppHeight() {
   if (tg?.onEvent) {
     // Стреляет при появлении/скрытии клавиатуры и при разворачивании приложения
     tg.onEvent('viewportChanged', setHeight);
-  } else {
-    // fallback для обычного браузера
-    window.addEventListener('resize', setHeight);
   }
+  // В браузере/десктопе клавиатура меняет innerHeight без viewportChanged — слушаем resize всегда
+  window.addEventListener('resize', setHeight);
 
   window.addEventListener('orientationchange', () => setTimeout(setHeight, 300));
 }
@@ -63,6 +62,79 @@ type LoyaltyCard = {
   format: "qr" | "barcode";
   createdAt: string;
 };
+
+// ===== Коды карт лояльности: форматы, валидация, очистка сканов =====
+
+// Формат штрих-кода для react-barcode: EAN-13/EAN-8/UPC по длине цифр, иначе универсальный Code128
+type BarcodeFormat = NonNullable<BarcodeProps["format"]>;
+
+const barcodeFormatFor = (code: string): BarcodeFormat => {
+  if (/^\d{13}$/.test(code)) return "EAN13";
+  if (/^\d{8}$/.test(code)) return "EAN8";
+  if (/^\d{12}$/.test(code)) return "UPC";
+  return "CODE128";
+};
+
+// Автоопределение формата: чисто цифровые коды считаем штрих-кодами, остальные — QR
+const detectCardFormat = (code: string): "qr" | "barcode" => (/^\d{6,20}$/.test(code) ? "barcode" : "qr");
+
+// Стандартная проверка контрольной цифры GS1 (EAN-8 / UPC-A / EAN-13)
+function gs1ChecksumOk(digits: string): boolean {
+  const check = Number(digits[digits.length - 1]);
+  if (Number.isNaN(check)) return false;
+  let sum = 0;
+  [...digits.slice(0, -1)].reverse().forEach((digit, index) => {
+    sum += Number(digit) * (index % 2 === 0 ? 3 : 1);
+  });
+  return (10 - (sum % 10)) % 10 === check;
+}
+
+// Проверка, что jsbarcode реально сможет отрисовать значение в выбранном формате
+// (иначе react-barcode падает с ошибкой внутри эффекта → на экране пустая белая плашка)
+const barcodeValueOk = (code: string, format: BarcodeFormat): boolean => {
+  switch (format) {
+    case "EAN13": return /^\d{12,13}$/.test(code) && (code.length === 12 || gs1ChecksumOk(code));
+    case "EAN8": return /^\d{7,8}$/.test(code) && (code.length === 7 || gs1ChecksumOk(code));
+    case "UPC": return /^\d{11,12}$/.test(code) && (code.length === 11 || gs1ChecksumOk(code));
+    default: return true; // CODE128 кодирует любой печатный ASCII
+  }
+};
+
+const isAsciiPrintable = (code: string): boolean => /^[\x20-\x7e]+$/.test(code);
+
+// Очистка отсканированной строки: URL → код из query; составные payload
+// (например, сербские карты вида «mRS;1;QdeX…») → только сегмент-идентификатор
+function cleanScannedCode(raw: string): string {
+  let code = raw.trim().replace(/[\u0000-\u001f\u007f]/g, "");
+
+  if (/^https?:\/\//i.test(code)) {
+    try {
+      const url = new URL(code);
+      const param = url.searchParams.get("code") ?? url.searchParams.get("id") ?? url.searchParams.get("card");
+      code = param ?? url.pathname.split("/").filter(Boolean).pop() ?? code;
+    } catch {
+      // оставить строку как есть
+    }
+  }
+
+  if (code.includes(";")) {
+    const segments = code.split(";").map((segment) => segment.trim()).filter(Boolean);
+    const numeric = segments.find((segment) => /^\d{6,20}$/.test(segment));
+    const longestAlpha = [...segments]
+      .filter((segment) => /^[A-Za-z0-9._+-]{4,}$/.test(segment))
+      .sort((left, right) => right.length - left.length)[0];
+    code = numeric ?? longestAlpha ?? segments[0] ?? code;
+  }
+
+  return code.slice(0, 120);
+}
+
+// Короткое отображение кода в списках: без сырого Base64/payload на весь экран
+function shortCardCode(code: string, max = 24): string {
+  if (!code) return "";
+  if (code.length <= max) return code;
+  return `${code.slice(0, Math.max(max - 1, 1))}…`;
+}
 
 const DEFAULT_DASHBOARD: Dashboard = {
   categories: [
@@ -317,6 +389,78 @@ function ExpenseRow({ expense, onLongPress }: { expense: Expense; onLongPress: (
         <time>{date} {time}</time>
       </div>
     </button>
+  );
+}
+
+// Ловим ошибки отрисовки jsbarcode (они происходят внутри useEffect компонента
+// react-barcode и не ловятся обычным try/catch) — вместо падения показываем QR
+class CodeErrorBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("Не удалось отрисовать штрих-код, показываю QR-код:", error);
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
+
+// Рендер кода карты: запрошенный формат → CODE128 (для ASCII) → QR-код как fallback.
+// Гарантирует, что вместо белой плашки всегда отображается сканируемый код.
+function CardCodeView({ card }: { card: LoyaltyCard }) {
+  const [barcodeFailed, setBarcodeFailed] = useState(false);
+  // Смена карты или её кода сбрасывает флаг ошибки
+  useEffect(() => {
+    setBarcodeFailed(false);
+  }, [card.id, card.code]);
+
+  const qrFallback = (
+    <QRCodeSVG
+      value={card.code}
+      size={card.format === "qr" ? 260 : 200}
+      bgColor="#ffffff"
+      fgColor="#000000"
+      level="M"
+    />
+  );
+
+  if (!card.code) {
+    return <p className="loyalty-codes-empty">У карты нет кода</p>;
+  }
+
+  let format: BarcodeFormat | null = null;
+  if (card.format === "barcode" && !barcodeFailed) {
+    const detected = barcodeFormatFor(card.code);
+    if (barcodeValueOk(card.code, detected)) {
+      format = detected;
+    } else if (isAsciiPrintable(card.code)) {
+      // Невалидный EAN/UPC (например, битая контрольная сумма) — рисуем Code128
+      format = "CODE128";
+    }
+  }
+
+  if (!format) {
+    return qrFallback;
+  }
+
+  return (
+    <CodeErrorBoundary fallback={qrFallback}>
+      <Barcode
+        key={`${card.id}-${format}-${barcodeFailed}`}
+        value={card.code}
+        format={format}
+        width={2}
+        height={80}
+        displayValue={false}
+        background="#ffffff"
+        lineColor="#000000"
+      />
+    </CodeErrorBoundary>
   );
 }
 
@@ -1032,10 +1176,18 @@ useEffect(() => {
   const handleQrReceived = (data?: { data?: string }) => {
     const receiptUrl = data?.data;
     if (!receiptUrl) return;
-    // QR получен — закрываем сканер и отписываемся от события
+    // QR получен — закрываем сканер и отписываемся от событий
     telegram?.offEvent("qrTextReceived", handleQrReceived);
+    telegram?.offEvent("scanQrPopupClosed", handleReceiptScanClosed);
     telegram?.closeScanQrPopup?.();
     void parseReceipt(receiptUrl);
+  };
+
+  // Попап нативного сканера закрыт без результата — снимаем подписки,
+  // чтобы обработчик не «стрелял» при следующих сканированиях
+  const handleReceiptScanClosed = () => {
+    telegram?.offEvent("qrTextReceived", handleQrReceived);
+    telegram?.offEvent("scanQrPopupClosed", handleReceiptScanClosed);
   };
 
   // Черновики позиций чека: название, сумма и категория, отредактированные вручную
@@ -1128,6 +1280,7 @@ useEffect(() => {
       return;
     }
     telegram.onEvent("qrTextReceived", handleQrReceived);
+    telegram.onEvent("scanQrPopupClosed", handleReceiptScanClosed);
     telegram.showScanQrPopup({ text: "Отсканируйте QR на чеке" });
   };
 
@@ -1141,37 +1294,132 @@ useEffect(() => {
   const [cardNameDraft, setCardNameDraft] = useState("");
   const [cardCodeDraft, setCardCodeDraft] = useState("");
   const [cardFormError, setCardFormError] = useState<string>();
+  const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
+  const html5ScannerRef = useRef<import("html5-qrcode").Html5Qrcode | null>(null);
+  const cardScanHandledRef = useRef(false);
 
-  // QR/штрих-код, отсканированный нативным сканером Telegram, подставляется в поле кода
+  // Остановка веб-сканера (html5-qrcode). Ref обнуляем сразу, чтобы не остановить дважды.
+  const stopCameraScanner = async () => {
+    const scanner = html5ScannerRef.current;
+    if (!scanner) return;
+    html5ScannerRef.current = null;
+    try {
+      await scanner.stop();
+      scanner.clear();
+    } catch (error) {
+      console.warn("Остановка веб-сканера:", error);
+    }
+  };
+
+  const openCameraScanner = () => {
+    cardScanHandledRef.current = false;
+    setCardFormError(undefined);
+    setIsCameraScannerOpen(true);
+  };
+
+  const closeCameraScanner = async () => {
+    await stopCameraScanner();
+    setIsCameraScannerOpen(false);
+  };
+
+  // Веб-сканер камеры (html5-qrcode): читает EAN-13/EAN-8/UPC/Code128/Code39/ITF/QR —
+  // то, что нативный сканер Telegram часто игнорирует для 1D штрих-кодов
+  useEffect(() => {
+    if (!isCameraScannerOpen) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import("html5-qrcode");
+        const scanner = new Html5Qrcode("card-scanner-region", {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.QR_CODE,
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.ITF,
+          ],
+          verbose: false,
+        });
+        html5ScannerRef.current = scanner;
+        await scanner.start(
+          { facingMode: "environment" },
+          {
+            fps: 10,
+            // Широкая и невысокая зона сканирования — оптимальна для 1D штрих-кодов
+            qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+              const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+              return { width: Math.round(minEdge * 0.9), height: Math.round(minEdge * 0.55) };
+            },
+          },
+          (decodedText: string) => {
+            if (cardScanHandledRef.current) return;
+            cardScanHandledRef.current = true;
+            window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
+            setCardCodeDraft(cleanScannedCode(decodedText));
+            void closeCameraScanner();
+          },
+          () => {
+            // Кадр без кода — штатная ситуация, пропускаем
+          },
+        );
+        if (cancelled) void closeCameraScanner();
+      } catch (error) {
+        console.error("Веб-сканер недоступен:", error);
+        if (!cancelled) {
+          setIsCameraScannerOpen(false);
+          setCardFormError("Не удалось открыть камеру. Разрешите доступ или введите код вручную.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      void stopCameraScanner();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCameraScannerOpen]);
+
+  // Нативный сканер Telegram: получен текст из QR/штрих-кода
   const handleCardCodeReceived = (data?: { data?: string }) => {
-    const code = data?.data?.trim();
-    if (!code) return;
+    const raw = data?.data?.trim();
+    if (!raw) return;
+    cardScanHandledRef.current = true;
     telegram?.offEvent("qrTextReceived", handleCardCodeReceived);
+    telegram?.offEvent("scanQrPopupClosed", handleCardScanPopupClosed);
     telegram?.closeScanQrPopup?.();
-    setCardCodeDraft(code);
+    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
+    setCardCodeDraft(cleanScannedCode(raw));
+  };
+
+  // Нативный сканер закрыт без результата — вероятно, это 1D штрих-код, который
+  // Telegram не распознал. Автоматически открываем веб-сканер как fallback.
+  const handleCardScanPopupClosed = () => {
+    telegram?.offEvent("qrTextReceived", handleCardCodeReceived);
+    telegram?.offEvent("scanQrPopupClosed", handleCardScanPopupClosed);
+    if (!cardScanHandledRef.current) openCameraScanner();
   };
 
   const startCardCodeScan = () => {
-    if (!telegram?.showScanQrPopup) {
-      setCardFormError("Сканер недоступен: откройте Mini App в Telegram или введите код вручную");
+    setCardFormError(undefined);
+    cardScanHandledRef.current = false;
+    if (telegram?.showScanQrPopup) {
+      telegram.onEvent("qrTextReceived", handleCardCodeReceived);
+      telegram.onEvent("scanQrPopupClosed", handleCardScanPopupClosed);
+      telegram.showScanQrPopup({ text: "Наведите на QR или штрих-код карты" });
       return;
     }
-    setCardFormError(undefined);
-    telegram.onEvent("qrTextReceived", handleCardCodeReceived);
-    telegram.showScanQrPopup({ text: "Отсканируйте штрих-код или QR карты" });
+    // Нативный сканер недоступен (обычный браузер) — сразу включаем веб-сканер
+    openCameraScanner();
   };
 
-  // Формат штрих-кода для react-barcode: EAN-13/EAN-8/UPC по длине цифр, иначе универсальный Code128
-  type BarcodeFormat = NonNullable<React.ComponentProps<typeof Barcode>["format"]>;
-  const barcodeFormatFor = (code: string): BarcodeFormat => {
-    if (/^\d{13}$/.test(code)) return "EAN13";
-    if (/^\d{8}$/.test(code)) return "EAN8";
-    if (/^\d{12}$/.test(code)) return "UPC";
-    return "CODE128";
+  // Поддержка клавиатуры Telegram: при фокусе на поле прокручиваем его в видимую
+  // область модалки, чтобы «Сохранить»/«Отмена» оставались доступны
+  const scrollFieldIntoView = (event: ReactFocusEvent<HTMLElement>) => {
+    const target = event.currentTarget;
+    window.setTimeout(() => target.scrollIntoView({ block: "center", behavior: "smooth" }), 250);
   };
-
-  // Автоопределение формата: чисто цифровые коды считаем штрих-кодами, остальные — QR
-  const detectCardFormat = (code: string): "qr" | "barcode" => (/^\d{6,20}$/.test(code) ? "barcode" : "qr");
 
   const addLoyaltyCard = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1701,7 +1949,7 @@ useEffect(() => {
                   <span className="loyalty-card-icon"><Icon name="loyalty" /></span>
                   <div className="loyalty-card-info">
                     <strong>{card.name}</strong>
-                    <small>{card.code}</small>
+                    <small>{shortCardCode(card.code)}</small>
                   </div>
                   <Icon name="arrow" />
                 </button>
@@ -1944,7 +2192,7 @@ useEffect(() => {
       {showCardForm && (
         <div className="modal-backdrop" onClick={() => setShowCardForm(false)}>
           <form
-            className="expense-modal expense-modal--plain"
+            className="expense-modal expense-modal--plain expense-modal--card"
             onSubmit={(e) => { e.preventDefault(); void addLoyaltyCard(e); }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1956,6 +2204,7 @@ useEffect(() => {
               autoFocus
               value={cardNameDraft}
               onChange={(e) => setCardNameDraft(e.target.value)}
+              onFocus={scrollFieldIntoView}
             />
             <div className="card-code-row">
               <input
@@ -1965,17 +2214,30 @@ useEffect(() => {
                 required
                 value={cardCodeDraft}
                 onChange={(e) => { setCardCodeDraft(e.target.value); setCardFormError(undefined); }}
-                onFocus={(e) => { operatorInputRef.current = e.currentTarget; }}
+                onFocus={(e) => { operatorInputRef.current = e.currentTarget; scrollFieldIntoView(e); }}
               />
               <button type="button" className="card-scan-button" onClick={startCardCodeScan} aria-label="Сканировать код карты">
                 <Icon name="loyalty" />
               </button>
             </div>
-            <select name="cardFormat" defaultValue="auto">
+            <select name="cardFormat" defaultValue="auto" onFocus={scrollFieldIntoView}>
               <option value="auto">Формат: определить автоматически</option>
               <option value="barcode">Штрих-код (Code128 / EAN-13)</option>
               <option value="qr">QR-код</option>
             </select>
+            {isCameraScannerOpen && (
+              <div className="card-scanner-box">
+                <div id="card-scanner-region" />
+                <p className="card-scanner-hint">Наведите камеру на штрих-код или QR-код карты</p>
+                <button
+                  type="button"
+                  className="card-scanner-stop"
+                  onClick={() => void closeCameraScanner()}
+                >
+                  Остановить камеру
+                </button>
+              </div>
+            )}
             {cardFormError && <p className="receipt-error-text">{cardFormError}</p>}
             <div className="button-row">
               <button type="submit" disabled={isSubmitting}>Сохранить карту</button>
@@ -1995,20 +2257,9 @@ useEffect(() => {
         >
           <div className="loyalty-fullscreen" onClick={(e) => e.stopPropagation()}>
             <b>{expandedCard.name}</b>
-            <small className="loyalty-fullscreen-code">{expandedCard.code}</small>
+            <small className="loyalty-fullscreen-code">{shortCardCode(expandedCard.code, 44)}</small>
             <div className="loyalty-codes">
-              {expandedCard.format !== "qr" && (
-                <Barcode
-                  value={expandedCard.code}
-                  format={barcodeFormatFor(expandedCard.code)}
-                  width={1.7}
-                  height={110}
-                  displayValue={false}
-                  background="#ffffff"
-                  lineColor="#000000"
-                />
-              )}
-              <QRCodeSVG value={expandedCard.code} size={expandedCard.format === "qr" ? 260 : 170} bgColor="#ffffff" fgColor="#000000" level="M" />
+              <CardCodeView key={expandedCard.id} card={expandedCard} />
             </div>
             <div className="button-row">
               <button type="button" onClick={() => setExpandedCard(undefined)}>Свернуть</button>

@@ -1125,18 +1125,59 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   font-weight: 650;
 }
 
+/* ===== Модалка добавления карты лояльности ===== */
+/* Компактный контейнер: не шире 90vw, внутренний скролл при открытой клавиатуре */
+.expense-modal--card {
+  max-width: min(90vw, 448px);
+  max-height: 85vh; /* fallback для старых движков */
+  max-height: 85dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 19px 16px;
+}
+
 /* Строка «код + кнопка сканера» в форме добавления */
-.card-code-row { display: flex; gap: 8px; }
+.card-code-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .card-code-row input { flex: 1; min-width: 0; }
-.card-scan-button {
+/* Специфичность выше, чем у `.expense-modal button { width: 100% }`,
+   иначе кнопка сканера раздувается на всю строку и инпут вылезает за модалку */
+.card-code-row .card-scan-button {
   display: grid;
   place-items: center;
   width: 48px;
+  height: 48px;
   flex: none;
+  padding: 0;
   border-radius: 10px;
   border: 1px solid var(--border-color);
   background: var(--secondary-bg-color);
   color: var(--link-color);
+}
+
+/* Веб-сканер камеры (html5-qrcode) внутри модалки */
+.card-scanner-box { display: grid; gap: 8px; }
+.card-scanner-box #card-scanner-region {
+  width: 100%;
+  min-height: 220px;
+  border-radius: 13px;
+  overflow: hidden;
+  background: #000000;
+}
+.card-scanner-box video {
+  display: block;
+  width: 100% !important;
+  height: 220px !important;
+  object-fit: cover;
+}
+.card-scanner-hint { margin: 0; text-align: center; font-size: 13px; color: var(--hint-color); }
+.card-scanner-box .card-scanner-stop {
+  min-height: 44px;
+  font-weight: 650;
+  color: var(--hint-color);
+  border: 1px solid var(--border-color);
+  background: transparent;
 }
 
 /* Полноэкранный просмотр кода карты */
@@ -1171,5 +1212,8 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   width: 100%;
 }
 
-/* react-barcode рендерит svg с текстовым названием — центрируем и вписываем в ширину */
+/* react-barcode и qrcode.react рендерят svg с viewBox — центрируем и вписываем в ширину */
 .loyalty-codes svg { max-width: 100%; height: auto; }
+
+/* Плашка без кода (вместо пустого белого прямоугольника) */
+.loyalty-codes-empty { margin: 0; padding: 18px 8px; color: var(--hint-color); font-size: 13px; text-align: center; }
