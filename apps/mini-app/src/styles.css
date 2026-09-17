@@ -211,33 +211,53 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .month-total small { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
 .month-total b { margin-top: 3px; color: var(--link-color); font-size: 16px; letter-spacing: -.3px; }
 
-.category-icon-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 10px; }
-.category-icon-button { display: grid; gap: 7px; justify-items: center; min-width: 0; padding: 0; color: inherit; background: transparent; text-align: center; }
-.category-icon-button > span {
+.category-icon-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 10px; }
+/* Плашка категории: фон = её цвет из getCategoryColor (inline-стиль), а иконка,
+   название и сумма всегда белые — единый стиль на любом hue и полная
+   синхронизация с сектором круговой диаграммы */
+.category-icon-button {
   display: grid;
-  width: 58px;
-  height: 58px;
-  place-items: center;
-  border-radius: 19px;
-  /* fallback-цвет, если inline-стиль с цветом категории не передан */
-  color: var(--button-text-color, #ffffff);
+  gap: 5px;
+  justify-items: center;
+  min-width: 0;
+  padding: 12px 6px 10px;
+  border-radius: 18px;
+  /* fallback, если inline-стиль с цветом категории не передан */
   background: var(--button-color);
-  font-size: 20px;
-  font-weight: 800;
+  color: var(--button-text-color, #ffffff);
+  text-align: center;
   transition: transform .15s ease, box-shadow .15s ease;
 }
+.category-icon-button > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 10px;
+  /* Иконка не перекрашивается: белый глиф прямо на цветной плашке */
+  background: transparent;
+  font-size: 20px;
+  font-weight: 800;
+  color: #ffffff;
+  transition: transform .15s ease;
+}
 
-.category-icon-button b { width: 100%; overflow: hidden; font-size: 11px; font-weight: 650; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
-.category-icon-button small { margin-top: -4px; font-size: 10px; font-weight: 650; }
+/* Цвет текста задаём явно: глобальное правило small { color: var(--hint-color) }
+   дало бы серый текст на цветном фоне */
+.category-icon-button b { width: 100%; overflow: hidden; font-size: 11px; font-weight: 650; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
+.category-icon-button small { margin-top: -2px; font-size: 10px; font-weight: 650; color: inherit; opacity: .85; }
 /* Выбранная категория (её часть увеличена на диаграмме): кольцо вокруг плашки.
    Правило идёт до :active, чтобы нажатие всё ещё давало отклик сжатием */
 .category-icon-button.selected > span { transform: scale(1.06); }
 .category-icon-button:active > span { transform: scale(.92); }
 
-.add-category-button > span {
-  color: var(--button-color);
-  border: 1.5px dashed color-mix(in srgb, var(--button-color) 40%, transparent);
+/* Кнопка «Add» — не категория: остаётся нейтральной, без цветной плашки */
+.add-category-button {
   background: color-mix(in srgb, var(--button-color) 8%, transparent);
+  color: var(--button-color);
+}
+.add-category-button > span {
+  border: 1.5px dashed color-mix(in srgb, var(--button-color) 40%, transparent);
 }
 
 .sheet-form { display: grid; gap: 10px; margin-bottom: 18px; padding: 15px; }
@@ -604,6 +624,22 @@ input:focus, select:focus { border-color: var(--accent-color); }
 .accordion-content { border-top: 1px solid var(--border-color); border-radius: 0; box-shadow: none; }
 .mini-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; color: var(--button-color); background: color-mix(in srgb, var(--button-color) 12%, transparent); }
 .mini-icon svg { width: 15px; height: 15px; }
+
+/* ===== Плашки категорий на экране «Траты» =====
+   Фон = цвет категории (тот же, что у плашки на «Графике» и у сектора
+   диаграммы — inline-стиль из getCategoryColor). Иконка, название и сумма
+   всегда белые; цветной остаётся только заголовок-триггер, список трат внутри
+   остаётся на нейтральном фоне */
+.accordion-item--category { box-shadow: 0 4px 14px color-mix(in srgb, var(--text-color) 10%, transparent); }
+.accordion-item--category .accordion-trigger { color: #ffffff; }
+.accordion-item--category .accordion-trigger span { color: #ffffff; }
+.accordion-item--category .accordion-trigger:active { background: color-mix(in srgb, #ffffff 14%, transparent); }
+/* Иконка не перекрашивается — белый глиф на полупрозрачном белом квадрате */
+.accordion-item--category .mini-icon { color: #ffffff; background: color-mix(in srgb, #ffffff 24%, transparent); }
+.accordion-item--category .accordion-right b { color: #ffffff; }
+.accordion-item--category .accordion-right svg { color: #ffffff; opacity: .85; }
+/* Внутри раскрытой плашки — обычные цвета, иначе белый текст был бы нечитаем */
+.accordion-item--category .accordion-content { color: var(--text-color); }
 
 .savings-card { padding: 30px 22px; text-align: center; }
 .savings-card h2 { margin: 12px 0 8px; }
@@ -1215,23 +1251,19 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   text-align: center;
 }
 
-/* Белая плашка кода карты: сплошное белое поле по краям критично для
-   сканеров на кассе (эквивалент bg-white p-4 rounded-2xl min-h-[120px] flex center overflow-hidden) */
+/* Центрирующая обёртка кода карты в полноэкранном режиме.
+   max-width: 280px ограничивает ширину белой плашки — штрихкод растягивается
+   до неё, а QR (200px) занимает ~70% этой ширины */
 .loyalty-codes {
   display: flex;
-  align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 120px;
-  padding: 16px;
-  overflow: hidden;
-  border-radius: 16px;
-  background: #ffffff;
+  max-width: 280px;
 }
 
-/* Штрих-код: тянется на всю ширину плашки (не w-auto и не max-w-xs), высота
-   ограничена (max-h-32 = 128px); preserveAspectRatio у viewBox / object-fit
-   у canvas сохраняют пропорции полос — код растягивается без сплющивания */
+/* Белая плашка штрихкода: эквивалент
+   w-full bg-white p-6 rounded-2xl flex items-center justify-center min-h-[100px] overflow-hidden.
+   Сплошное белое поле по краям критично для сканеров на кассе */
 .loyalty-code-box {
   display: flex;
   align-items: center;
@@ -1239,40 +1271,51 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   width: 100%;
   min-width: 0;
   overflow: hidden;
+  padding: 24px;        /* p-6 */
+  background: #ffffff;  /* bg-white */
+  border-radius: 16px;  /* rounded-2xl */
+  min-height: 100px;    /* min-h-[100px] */
 }
+
+/* Штрихкод SVG: адаптивно занимает ширину контейнера, но не больше 280px.
+   Height auto сохраняет пропорции из viewBox (width 1.5 / height 50 = тонкие
+   штрихи, «широкий низкий» код, как на референсе) */
 .loyalty-code-box svg,
 .loyalty-code-box canvas {
   display: block;
-  width: 100%;
-  height: auto;
-  max-height: 128px;
-  object-fit: contain;
+  width: 100%;       /* w-full */
+  max-width: 280px;  /* max-w-[280px] */
+  height: auto;      /* h-auto */
 }
 
 /* Глобальное правило `svg { fill: none; stroke: currentColor; stroke-width: 1.9 }`
-   наследуется детьми штрих-кода/QR: полосы «заплывают» обводкой, модули QR
+   наследуется детьми штрих-кода/QR: полоски «заплывают» обводкой, модули QR
    смазываются и плохо сканируются. Заливку (fill) не трогаем — jsbarcode и
    qrcode.react задают её атрибутами на <g>/<path>. */
-.loyalty-code-box svg *,
-.loyalty-code-qr svg * {
+.loyalty-codes svg *,
+.loyalty-codes canvas * {
   stroke: none;
 }
 
-/* QR-код (в том числе fallback вместо упавшего штрих-кода): квадрат по центру */
+/* Белый квадратный контейнер QR-кода: эквивалент
+   p-4 bg-white rounded-2xl flex justify-center items-center.
+   Без width: 100% — контейнер квадратный (content-based), QR не растягивается
+   во всю ширину плашки, а остаётся аккуратным и сфокусированным по центру */
 .loyalty-code-qr {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  padding: 16px;      /* p-4 */
+  background: #ffffff; /* bg-white */
+  border-radius: 16px; /* rounded-2xl */
 }
+
+/* QR SVG: фиксированный размер 200px (size={200}), центрируется flex-ом.
+   Переопределяет глобальное `svg { width: 22px; height: 22px }` */
 .loyalty-code-qr svg {
   display: block;
-  width: 100%;
-  max-width: 220px;
-  height: auto;
-  /* сбрасываем ограничение высоты от правила штрих-кода: QR-фоллбек
-     рендерится и внутри .loyalty-code-box, и должен остаться крупным */
-  max-height: none;
+  width: 200px;
+  height: 200px;
 }
 
 /* Плашка без кода (вместо пустого белого прямоугольника) */

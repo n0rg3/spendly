@@ -6,7 +6,7 @@ import { collection, doc, setDoc, getDoc, deleteDoc, onSnapshot, query, orderBy 
 import { QRCodeSVG } from "qrcode.react";
 import Barcode, { type BarcodeProps } from "react-barcode";
 import { db } from "./firebase";
-import { getCategoryColor, type CategoryColor } from "./categoryColors";
+import { getCategoryColor } from "./categoryColors";
 import { buildChartGradient, type CategoryStat } from "./chartGradient";
 import { nextSelectedCategoryIdOnOutsideTap } from "./chartInteraction";
 import "./styles.css";
@@ -359,6 +359,8 @@ function formatMoney(value: number) {
 }
 
 function ExpenseRow({ expense, onLongPress }: { expense: Expense; onLongPress: () => void }) {
+  // Иконка строки траты остаётся нейтральной: цвет категории используется
+  // только для плашек категорий и секторов диаграммы (без перекрашивания иконок)
   const { date, time } = useMemo(() => {
     const d = new Date(expense.createdAt);
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -432,9 +434,13 @@ function CardCodeView({ card }: { card: LoyaltyCard }) {
     <div className="loyalty-code-qr">
       <QRCodeSVG
         value={card.code}
-        // Размер задаёт внутреннюю систему координат (viewBox квадратный),
-        // фактическую ширину ограничивает CSS (.loyalty-code-qr svg → max-width 220px)
-        size={card.format === "qr" ? 220 : 160}
+        // size задаёт внутреннюю систему координат (квадратный viewBox)
+        // и фиксированный размер 200px — QR не растягивается во всю ширину,
+        // а остаётся квадратным (~70% ширины белой плашки)
+        size={200}
+        // Белое поле (quiet zone) вокруг кода: includeMargin={true} = 4 модуля
+        // по спецификации QR
+        includeMargin={true}
         bgColor="#ffffff"
         fgColor="#000000"
         level="M"
@@ -462,12 +468,14 @@ function CardCodeView({ card }: { card: LoyaltyCard }) {
     <div className="loyalty-code-box">
       {/* key сбрасывает состояние boundary при смене карты/кода */}
       <CodeErrorBoundary key={`${card.id}-${card.code}`} fallback={qrFallback}>
+        {/* Пропорции как на референсе: тонкие штрихи (width 1.5), высота меньше
+            ширины (height 50), margin 10 — белое поле вокруг кода под сканер */}
         <Barcode
           value={card.code}
           format={format}
-          width={2}
-          height={80}
-          margin={0}
+          width={1.5}
+          height={50}
+          margin={10}
           displayValue={false}
           background="#ffffff"
           lineColor="#000000"
@@ -1001,7 +1009,7 @@ useEffect(() => {
   };
 
   const categoryStats = useMemo<CategoryStat[]>(() => {
-    const data = new Map<string, { id: string; name: string; amount: number; color: CategoryColor }>();
+    const data = new Map<string, { id: string; name: string; amount: number; color: string }>();
 
     filteredExpenses.forEach((expense) => {
       const key = expense.category?.id ?? "other";
@@ -1644,8 +1652,11 @@ useEffect(() => {
             {[...groupedExpenses.entries()].map(([catId, expenses]) => {
               const category = expenses[0].category;
               const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+              // Тот же цвет, что у плашки на «Графике» и у сектора диаграммы
+              const categoryColor =
+                categoryColorById.get(catId) ?? getCategoryColor(category?.name ?? "Без категории");
               return (
-                <div className="accordion-item" key={catId}>
+                <div className="accordion-item accordion-item--category" key={catId} style={{ background: categoryColor }}>
                   <button className={`accordion-trigger ${expandedAccId.has(catId) ? "active" : ""}`} onClick={() => toggleAccordion(catId)}>
                     <div className="accordion-left">
                       <span className="mini-icon">{category?.icon ? <Icon name={category.icon} /> : "•"}</span>
@@ -1765,14 +1776,14 @@ useEffect(() => {
                 background: chartBackground,
                 // Подсветка кольца цветом выбранной категории
                 boxShadow: selectedCategoryMeta
-                  ? `0 0 0 6px color-mix(in srgb, ${selectedCategoryMeta.color.main} 22%, transparent)`
+                  ? `0 0 0 6px color-mix(in srgb, ${selectedCategoryMeta.color} 22%, transparent)`
                   : undefined,
               }}
             >
               <div>
                 <small
                   style={
-                    selectedCategoryMeta ? { color: selectedCategoryMeta.color.main } : undefined
+                    selectedCategoryMeta ? { color: selectedCategoryMeta.color } : undefined
                   }
                 >
                   {donutLabel}
@@ -1802,6 +1813,15 @@ useEffect(() => {
                   className={`category-icon-button${isSelected ? " selected" : ""}`}
                   key={category.id}
                   aria-pressed={isSelected}
+                  // Плашка категории: фон = её цвет, содержимое (иконка, название,
+                  // сумма) всегда белое — единый стиль и синхронизация с диаграммой
+                  style={{
+                    background: categoryColor,
+                    // Кольцо-разрыв в цвете категории: видно и вне плашки
+                    boxShadow: isSelected
+                      ? `0 0 0 2.5px var(--bg-color), 0 0 0 5px ${categoryColor}`
+                      : undefined,
+                  }}
                   onPointerDown={() => startCategoryPress(category)}
                   onPointerUp={endCategoryPress}
                   onPointerCancel={endCategoryPress}
@@ -1816,17 +1836,10 @@ useEffect(() => {
                     toggleCategorySelection(category.id);
                   }}
                 >
-                  <span
-                    className="system-icon-bg"
-                    style={{
-                      background: categoryColor.bg,
-                      color: categoryColor.main,
-                      boxShadow: isSelected ? `0 0 0 2.5px ${categoryColor.main}` : undefined,
-                    }}
-                  >
+                  <span className="system-icon-bg">
                     <Icon name={category.icon || "other"} />
                   </span>
-                  <b style={{ color: categoryColor.main }}>{category.name}</b>
+                  <b>{category.name}</b>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
                     <small>{formatMoney(categoryStat?.amount ?? 0)}</small>
                     {category.budgets?.[selectedMonth] && (

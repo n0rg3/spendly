@@ -2,13 +2,12 @@
 // Построение конического градиента круговой диаграммы с учётом выбранной
 // категории: выбранная часть показывается крупнее, остальные — приглушаются.
 
-import type { CategoryColor } from "./categoryColors";
-
 export type CategoryStat = {
   id: string;
   name: string;
   amount: number;
-  color: CategoryColor;
+  /** Цвет категории (hsl из getCategoryColor): фон плашки и сектор диаграммы */
+  color: string;
 };
 
 // Насколько доля выбранной категории «приближается» к полному кругу:
@@ -61,8 +60,8 @@ export function buildChartGradient(
     // Остальные секторы приглушаются — выбранная часть читается как увеличенная
     const dimmed = hasSelectedSegment && index !== selectedIndex;
     const color = dimmed
-      ? `color-mix(in srgb, ${item.color.main} 45%, var(--secondary-bg-color))`
-      : item.color.main;
+      ? `color-mix(in srgb, ${item.color} 45%, var(--secondary-bg-color))`
+      : item.color;
     const segment = `${color} ${position}% ${end}%`;
     position = end;
     return segment;
