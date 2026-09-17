@@ -1,11 +1,14 @@
 // apps/mini-app/src/App.tsx
-import { Component, StrictMode, useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type FormEvent, type ReactNode } from "react";
+import { Component, StrictMode, useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import * as LucideIcons from "lucide-react";
 import { collection, doc, setDoc, getDoc, deleteDoc, onSnapshot, query, orderBy } from "firebase/firestore";
 import { QRCodeSVG } from "qrcode.react";
 import Barcode, { type BarcodeProps } from "react-barcode";
 import { db } from "./firebase";
+import { getCategoryColor, type CategoryColor } from "./categoryColors";
+import { buildChartGradient, type CategoryStat } from "./chartGradient";
+import { nextSelectedCategoryIdOnOutsideTap } from "./chartInteraction";
 import "./styles.css";
 
 function lockAppHeight() {
@@ -65,11 +68,19 @@ type LoyaltyCard = {
 
 // ===== Коды карт лояльности: форматы, валидация, очистка сканов =====
 
-// Формат штрих-кода для react-barcode: ровно 13 цифр — EAN13, всё остальное
-// (включая буквенные коды вроде «mRS») — универсальный Code128
+// Выбор формата штрих-кода по содержимому кода:
+// только цифры и 13 знаков → EAN13, только цифры и 8 знаков → EAN8,
+// всё остальное (буквы вроде «mRS», 16+ цифр, составные payload) → CODE128 —
+// универсальный формат, который кодирует любую длину и любой печатный ASCII
 type BarcodeFormat = NonNullable<BarcodeProps["format"]>;
 
-const barcodeFormatFor = (code: string): BarcodeFormat => (/^\d{13}$/.test(code) ? "EAN13" : "CODE128");
+const barcodeFormatFor = (code: string): BarcodeFormat => {
+  const isDigitsOnly = /^\d+$/.test(code);
+
+  if (isDigitsOnly && code.length === 13) return "EAN13";
+  if (isDigitsOnly && code.length === 8) return "EAN8";
+  return "CODE128";
+};
 
 // Автоопределение формата: чисто цифровые коды считаем штрих-кодами, остальные — QR
 const detectCardFormat = (code: string): "qr" | "barcode" => (/^\d{6,20}$/.test(code) ? "barcode" : "qr");
@@ -87,10 +98,13 @@ function gs1ChecksumOk(digits: string): boolean {
 
 // Проверка, что jsbarcode реально сможет отрисовать значение в выбранном формате
 // (иначе react-barcode падает с ошибкой внутри эффекта → на экране пустая белая плашка)
-const barcodeValueOk = (code: string, format: BarcodeFormat): boolean =>
-  format === "EAN13"
-    ? /^\d{12,13}$/.test(code) && (code.length === 12 || gs1ChecksumOk(code))
-    : isAsciiPrintable(code); // CODE128 кодирует любой печатный ASCII
+const barcodeValueOk = (code: string, format: BarcodeFormat): boolean => {
+  switch (format) {
+    case "EAN13": return /^\d{12,13}$/.test(code) && (code.length === 12 || gs1ChecksumOk(code));
+    case "EAN8": return /^\d{7,8}$/.test(code) && (code.length === 7 || gs1ChecksumOk(code));
+    default: return isAsciiPrintable(code); // CODE128 кодирует любой печатный ASCII
+  }
+};
 
 const isAsciiPrintable = (code: string): boolean => /^[\x20-\x7e]+$/.test(code);
 
@@ -140,15 +154,8 @@ const DEFAULT_DASHBOARD: Dashboard = {
   savingsGoals: [],
 };
 
-// Палитра fallback-цветов: используется и в секторах диаграммы, и в плашках
-// категорий под графиком (единый источник цветов → диаграмма и сетка совпадают)
-const CATEGORY_FALLBACK_COLORS = [
-  "var(--button-color)",
-  "color-mix(in srgb, var(--button-color) 80%, white)",
-  "color-mix(in srgb, var(--button-color) 60%, white)",
-  "color-mix(in srgb, var(--button-color) 40%, white)",
-  "color-mix(in srgb, var(--button-color) 20%, white)",
-];
+// Цвета категорий не хранятся константами: количество категорий динамическое,
+// палитра считается хэшем от названия — см. getCategoryColor в ./categoryColors
 
 // Псевдо-категория: модалка траты открыта вручную (без категории)
 const MANUAL_NO_CATEGORY: Category = { id: "", name: "Без категории", icon: "other", color: null };
@@ -412,9 +419,10 @@ class CodeErrorBoundary extends Component<{ children: ReactNode; fallback: React
   }
 }
 
-// Рендер кода карты: штрих-код (EAN13 для 13 цифр, иначе CODE128) → QR-код как fallback.
-// CodeErrorBoundary ловит ошибки jsbarcode (они происходят внутри useEffect и не ловятся
-// обычным try/catch) — вместо белой плашки всегда отображается читаемый код.
+// Рендер кода карты: 1D-штрих-код (EAN13/EAN8/CODE128) → 2D QR-код как fallback.
+// CodeErrorBoundary — аналог try/catch: ошибки jsbarcode происходят внутри useEffect
+// компонента react-barcode и обычным try/catch не ловятся, поэтому вместо пустой
+// белой плашки автоматически рендерится QR-код.
 function CardCodeView({ card }: { card: LoyaltyCard }) {
   if (!card.code) {
     return <p className="loyalty-codes-empty">У карты нет кода</p>;
@@ -424,7 +432,9 @@ function CardCodeView({ card }: { card: LoyaltyCard }) {
     <div className="loyalty-code-qr">
       <QRCodeSVG
         value={card.code}
-        size={card.format === "qr" ? 260 : 200}
+        // Размер задаёт внутреннюю систему координат (viewBox квадратный),
+        // фактическую ширину ограничивает CSS (.loyalty-code-qr svg → max-width 220px)
+        size={card.format === "qr" ? 220 : 160}
         bgColor="#ffffff"
         fgColor="#000000"
         level="M"
@@ -437,8 +447,11 @@ function CardCodeView({ card }: { card: LoyaltyCard }) {
     const detected = barcodeFormatFor(card.code);
     if (barcodeValueOk(card.code, detected)) {
       format = detected;
+    } else if (isAsciiPrintable(card.code)) {
+      // Невалидный EAN (например, битая контрольная сумма) — универсальный Code128
+      format = "CODE128";
     }
-    // Невалидный EAN/UPC (буквы, битая контрольная сумма) — QR-фоллбек ниже
+    // Непечатный ASCII (кириллица и т.п.) — рендерим QR-код ниже
   }
 
   if (!format) {
@@ -454,6 +467,7 @@ function CardCodeView({ card }: { card: LoyaltyCard }) {
           format={format}
           width={2}
           height={80}
+          margin={0}
           displayValue={false}
           background="#ffffff"
           lineColor="#000000"
@@ -492,6 +506,9 @@ function App() {
   const [goalIconValue, setGoalIconValue] = useState("goal");
   const [expenseCategory, setExpenseCategory] = useState<Category>();
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
+  // Категория, выбранная тапом в сетке на экране графиков: её часть диаграммы
+  // показывается крупнее и подписывается именем в центре кольца
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | undefined>(undefined);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [categoryIconValue, setCategoryIconValue] = useState("other");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
@@ -539,6 +556,11 @@ useEffect(() => {
       operatorInputRef.current = amountInputRef.current;
     }
   }, [expenseCategory]);
+
+  // Уход с экрана аналитики (тапы по нижней навигации вне main) снимает выбор
+  useEffect(() => {
+    if (activeTab !== "chart") setSelectedCategoryId(undefined);
+  }, [activeTab]);
 
   const insertOperator = (op: string) => {
     const input = operatorInputRef.current;
@@ -963,16 +985,34 @@ useEffect(() => {
     if (categoryPressTimer.current) window.clearTimeout(categoryPressTimer.current);
   };
 
-  const categoryStats = useMemo(() => {
-    const data = new Map<string, { id: string; name: string; amount: number; color: string }>();
+  // Тап по категории выбирает её (повторный тап снимает выбор) — выбранная
+  // категория показывается на диаграмме крупнее с подписью имени
+  const toggleCategorySelection = (categoryId: string) => {
+    setSelectedCategoryId((current) => (current === categoryId ? undefined : categoryId));
+  };
+
+  // Сброс выбора «мимо графика»: тап вне диаграммы и вне карточек категорий
+  // (пустое место под сеткой, промежутки сетки, другие экраны) снимает выбор.
+  // Правила и список «своих» блоков — в ./chartInteraction
+  const handleOutsideChartTap = (event: ReactMouseEvent<HTMLElement>) => {
+    setSelectedCategoryId((current) =>
+      nextSelectedCategoryIdOnOutsideTap(event.target as HTMLElement | null, current)
+    );
+  };
+
+  const categoryStats = useMemo<CategoryStat[]>(() => {
+    const data = new Map<string, { id: string; name: string; amount: number; color: CategoryColor }>();
 
     filteredExpenses.forEach((expense) => {
       const key = expense.category?.id ?? "other";
+      const name = expense.category?.name ?? "Другое";
       const current = data.get(key) ?? {
         id: key,
-        name: expense.category?.name ?? "Другое",
+        name,
         amount: 0,
-        color: expense.category?.color ?? CATEGORY_FALLBACK_COLORS[data.size % CATEGORY_FALLBACK_COLORS.length],
+        // Цвет детерминированно выводится из названия: одинаковые категории
+        // в диаграмме и в сетке всегда получают один и тот же hue
+        color: getCategoryColor(name),
       };
       current.amount += expense.amount;
       data.set(key, current);
@@ -981,25 +1021,49 @@ useEffect(() => {
     return [...data.values()].sort((a, b) => b.amount - a.amount);
   }, [filteredExpenses]);
 
-  // Цвет плашки категории в сетке под графиком = цвет её сектора на диаграмме
+  // Цвета плашек категорий в сетке под графиком = цвета их секторов на диаграмме
   const categoryColorById = useMemo(
     () => new Map(categoryStats.map((item) => [item.id, item.color])),
     [categoryStats]
   );
 
-  const chartBackground = useMemo(() => {
-    const total = categoryStats.reduce((sum, item) => sum + item.amount, 0);
-    if (!total) return "conic-gradient(#e9ebf3 0 100%)";
-    let position = 0;
-    return `conic-gradient(${categoryStats
-      .map((item) => {
-        const end = position + (item.amount / total) * 100;
-        const segment = `${item.color} ${position}% ${end}%`;
-        position = end;
-        return segment;
-      })
-      .join(", ")})`;
-  }, [categoryStats]);
+  const chartTotal = useMemo(
+    () => categoryStats.reduce((sum, item) => sum + item.amount, 0),
+    [categoryStats]
+  );
+
+  // Данные выбранной категории: имя всегда берём из списка категорий (у неё
+  // может не быть трат в этом месяце), сумму и цвет — из статистики, если есть
+  const selectedCategoryMeta = useMemo(() => {
+    if (!selectedCategoryId) return undefined;
+    const stat = categoryStats.find((item) => item.id === selectedCategoryId);
+    const name = stat?.name ?? dashboard?.categories.find((item) => item.id === selectedCategoryId)?.name;
+    // Категория удалена или id устарел — считаем, что выбор снят
+    if (!name) return undefined;
+    return {
+      id: selectedCategoryId,
+      name,
+      amount: stat?.amount ?? 0,
+      color: stat?.color ?? getCategoryColor(name),
+    };
+  }, [categoryStats, dashboard, selectedCategoryId]);
+
+  // Диаграмма: выбранная категория показывается крупнее, остальные — приглушённо.
+  // Передаём id из selectedCategoryMeta: если категория удалена или id устарел,
+  // билдер получает undefined и диаграмма остаётся обычной (без приглушения всех секторов)
+  const chartBackground = useMemo(
+    () => buildChartGradient(categoryStats, selectedCategoryMeta?.id),
+    [categoryStats, selectedCategoryMeta?.id]
+  );
+
+  // Подпись в центре кольца: без выбора — месяц целиком, с выбором — имя
+  // выбранной категории, её сумма и доля в тратах месяца
+  const donutLabel = selectedCategoryMeta?.name ?? "Total";
+  const donutAmount = selectedCategoryMeta ? selectedCategoryMeta.amount : chartTotal;
+  const donutPercent =
+    selectedCategoryMeta && chartTotal > 0
+      ? Math.round((selectedCategoryMeta.amount / chartTotal) * 100)
+      : undefined;
 
   const user = telegram?.initDataUnsafe?.user;
   const sortedCategories = [...(dashboard?.categories ?? [])].sort((left, right) =>
@@ -1029,6 +1093,8 @@ useEffect(() => {
     let targetMonth = month;
     if (year === currentYear && month > currentMonth) targetMonth = currentMonth;
     setSelectedMonth(`${year}-${String(targetMonth).padStart(2, "0")}`);
+    // В другом месяце у категории могут быть совсем другие траты — выбор снимаем
+    setSelectedCategoryId(undefined);
     setShowMonthPicker(false);
   };
 
@@ -1460,7 +1526,14 @@ useEffect(() => {
   const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal || isReceiptLoading || parsedReceipt || showCardForm || expandedCard;
 
   return (
-    <main className={isModalOpen ? "modal-open" : ""} onClick={() => { setShowMonthPicker(false); setIconPickerOpen(false); }}>
+    <main
+      className={isModalOpen ? "modal-open" : ""}
+      onClick={(event) => {
+        setShowMonthPicker(false);
+        setIconPickerOpen(false);
+        handleOutsideChartTap(event);
+      }}
+    >
       <header className="categories-header">
         {activeTab === "savings" ? (
           <>
@@ -1686,10 +1759,28 @@ useEffect(() => {
         <div className="chart-tab">
           {/* ===== Sticky-блок: диаграмма не уходит при скролле ===== */}
           <section className="chart-card chart-card--sticky">
-            <div className="donut" style={{ background: chartBackground }}>
+            <div
+              className={`donut${selectedCategoryMeta ? " donut--selected" : ""}`}
+              style={{
+                background: chartBackground,
+                // Подсветка кольца цветом выбранной категории
+                boxShadow: selectedCategoryMeta
+                  ? `0 0 0 6px color-mix(in srgb, ${selectedCategoryMeta.color.main} 22%, transparent)`
+                  : undefined,
+              }}
+            >
               <div>
-                <small>Total</small>
-                <b>{formatMoney(filteredTotalSpent)}</b>
+                <small
+                  style={
+                    selectedCategoryMeta ? { color: selectedCategoryMeta.color.main } : undefined
+                  }
+                >
+                  {donutLabel}
+                </small>
+                <b>{formatMoney(donutAmount)}</b>
+                {donutPercent !== undefined && (
+                  <span className="donut-share">{donutPercent}% месяца</span>
+                )}
               </div>
             </div>
             {/* Легенды нет — суммы и цвета категорий показывает сетка ниже */}
@@ -1699,15 +1790,18 @@ useEffect(() => {
           {/* ===== Скроллируемая часть: сетка категорий под графиком ===== */}
           <section className="chart-categories">
             <div className="category-icon-grid">
-              {sortedCategories.map((category, index) => {
+              {sortedCategories.map((category) => {
+                // Тот же цвет, что у сектора диаграммы: сначала берём цвет из
+                // статистики (там уже посчитан от названия), иначе считаем хэш
                 const categoryColor =
-                  categoryColorById.get(category.id) ??
-                  category.color ??
-                  CATEGORY_FALLBACK_COLORS[index % CATEGORY_FALLBACK_COLORS.length];
+                  categoryColorById.get(category.id) ?? getCategoryColor(category.name);
+                const isSelected = category.id === selectedCategoryId;
+                const categoryStat = categoryStats.find((item) => item.id === category.id);
                 return (
                 <button
-                  className="category-icon-button"
+                  className={`category-icon-button${isSelected ? " selected" : ""}`}
                   key={category.id}
+                  aria-pressed={isSelected}
                   onPointerDown={() => startCategoryPress(category)}
                   onPointerUp={endCategoryPress}
                   onPointerCancel={endCategoryPress}
@@ -1717,14 +1811,24 @@ useEffect(() => {
                       didLongPress.current = false;
                       return;
                     }
-                    // Тап по категории ничего не делает —
-                    // редактирование открывается только по long press
+                    // Тап выбирает категорию: её часть на диаграмме показывается
+                    // крупнее с подписью имени; редактирование — только long press
+                    toggleCategorySelection(category.id);
                   }}
                 >
-                  <span className="system-icon-bg" style={{ background: categoryColor }}><Icon name={category.icon || "other"} /></span>
-                  <b>{category.name}</b>
+                  <span
+                    className="system-icon-bg"
+                    style={{
+                      background: categoryColor.bg,
+                      color: categoryColor.main,
+                      boxShadow: isSelected ? `0 0 0 2.5px ${categoryColor.main}` : undefined,
+                    }}
+                  >
+                    <Icon name={category.icon || "other"} />
+                  </span>
+                  <b style={{ color: categoryColor.main }}>{category.name}</b>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
-                    <small>{formatMoney(categoryStats.find((item) => item.id === category.id)?.amount ?? 0)}</small>
+                    <small>{formatMoney(categoryStat?.amount ?? 0)}</small>
                     {category.budgets?.[selectedMonth] && (
                       <small style={{ fontSize: '9px', opacity: 0.8 }}>from {formatMoney(category.budgets[selectedMonth])}</small>
                     )}

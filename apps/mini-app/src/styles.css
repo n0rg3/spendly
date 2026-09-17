@@ -219,15 +219,19 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   height: 58px;
   place-items: center;
   border-radius: 19px;
+  /* fallback-цвет, если inline-стиль с цветом категории не передан */
   color: var(--button-text-color, #ffffff);
   background: var(--button-color);
   font-size: 20px;
   font-weight: 800;
-  transition: transform .15s ease;
+  transition: transform .15s ease, box-shadow .15s ease;
 }
 
 .category-icon-button b { width: 100%; overflow: hidden; font-size: 11px; font-weight: 650; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .category-icon-button small { margin-top: -4px; font-size: 10px; font-weight: 650; }
+/* Выбранная категория (её часть увеличена на диаграмме): кольцо вокруг плашки.
+   Правило идёт до :active, чтобы нажатие всё ещё давало отклик сжатием */
+.category-icon-button.selected > span { transform: scale(1.06); }
 .category-icon-button:active > span { transform: scale(.92); }
 
 .add-category-button > span {
@@ -555,9 +559,16 @@ input:focus, select:focus { border-color: var(--accent-color); }
 }
 
 .chart-card { padding: 22px; }
-.donut { display: grid; width: 190px; height: 190px; place-items: center; margin: 4px auto 12px; border-radius: 50%; }
+.donut { display: grid; width: 190px; height: 190px; place-items: center; margin: 4px auto 12px; border-radius: 50%; transition: transform .2s ease, box-shadow .2s ease; }
 .donut > div { display: grid; width: 126px; height: 126px; place-content: center; text-align: center; border-radius: 50%; background: var(--secondary-bg-color); }
 .donut b { max-width: 112px; font-size: 19px; letter-spacing: -.4px; }
+
+/* Выбранная категория: кольцо приподнимается, в центре — имя категории,
+   её сумма и доля в тратах месяца. Тап по самому графику ничего не меняет —
+   выбор снимается тапом по этой же категории или мимо графика */
+.donut--selected { transform: scale(1.05); }
+.donut > div small { max-width: 108px; font-size: 11px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.donut > div .donut-share { margin-top: 1px; color: var(--hint-color); font-size: 11px; font-weight: 650; }
 
 /* ===== Экран аналитики: sticky-график + скроллируемая сетка категорий ===== */
 .chart-tab { display: flex; flex-direction: column; gap: 14px; }
@@ -1205,7 +1216,7 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
 }
 
 /* Белая плашка кода карты: сплошное белое поле по краям критично для
-   сканеров на кассе (эквивалент bg-white p-4 rounded-2xl min-h-[120px] flex center) */
+   сканеров на кассе (эквивалент bg-white p-4 rounded-2xl min-h-[120px] flex center overflow-hidden) */
 .loyalty-codes {
   display: flex;
   align-items: center;
@@ -1213,26 +1224,38 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   width: 100%;
   min-height: 120px;
   padding: 16px;
+  overflow: hidden;
   border-radius: 16px;
   background: #ffffff;
 }
 
 /* Штрих-код: тянется на всю ширину плашки (не w-auto и не max-w-xs), высота
-   ограничена (max-h-28 = 112px); preserveAspectRatio у viewBox / object-fit
+   ограничена (max-h-32 = 128px); preserveAspectRatio у viewBox / object-fit
    у canvas сохраняют пропорции полос — код растягивается без сплющивания */
 .loyalty-code-box {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 .loyalty-code-box svg,
 .loyalty-code-box canvas {
   display: block;
   width: 100%;
   height: auto;
-  max-height: 112px;
+  max-height: 128px;
   object-fit: contain;
+}
+
+/* Глобальное правило `svg { fill: none; stroke: currentColor; stroke-width: 1.9 }`
+   наследуется детьми штрих-кода/QR: полосы «заплывают» обводкой, модули QR
+   смазываются и плохо сканируются. Заливку (fill) не трогаем — jsbarcode и
+   qrcode.react задают её атрибутами на <g>/<path>. */
+.loyalty-code-box svg *,
+.loyalty-code-qr svg * {
+  stroke: none;
 }
 
 /* QR-код (в том числе fallback вместо упавшего штрих-кода): квадрат по центру */
