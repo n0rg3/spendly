@@ -17,6 +17,7 @@ interface TelegramWebApp {
   offEvent: (eventType: string, callback: (data?: { data?: string }) => void) => void;
   disableVerticalSwipes: () => void;
   enableClosingConfirmation: () => void;
+  disableClosingConfirmation?: () => void;
   showScanQrPopup?: (options: { text?: string }) => void;
   closeScanQrPopup?: () => void;
   HapticFeedback?: {

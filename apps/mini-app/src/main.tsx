@@ -2,7 +2,9 @@
 import { StrictMode, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import * as LucideIcons from "lucide-react";
-import { doc, setDoc, onSnapshot } from "firebase/firestore";
+import { collection, doc, setDoc, getDoc, deleteDoc, onSnapshot, query, orderBy } from "firebase/firestore";
+import { QRCodeSVG } from "qrcode.react";
+import Barcode from "react-barcode";
 import { db } from "./firebase";
 import "./styles.css";
 
@@ -51,7 +53,16 @@ type SavingsGoal = {
   createdAt: string;
 };
 type Dashboard = { categories: Category[]; expenses: Expense[]; totalSpent: number; userCreatedAt: string; savingsGoals: SavingsGoal[] };
-type Tab = "categories" | "expenses" | "chart" | "savings";
+type Tab = "chart" | "expenses" | "cards" | "savings";
+
+// Карта лояльности (Firestore: users/{userId}/loyalty_cards/{cardId})
+type LoyaltyCard = {
+  id: string;
+  name: string;
+  code: string;
+  format: "qr" | "barcode";
+  createdAt: string;
+};
 
 const DEFAULT_DASHBOARD: Dashboard = {
   categories: [
@@ -92,6 +103,36 @@ function toLocalDateTime(value: string) {
 function currentMonthKey() {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// ===== Кэш категорий товаров (экономия токенов Gemini) =====
+// Firestore: коллекция item_category_cache, документ = userId,
+// поле items = { [нормализованное имя товара]: название категории }.
+type ItemCategoryCache = Record<string, string>;
+
+// Нормализация имени товара: lowercase, trim, схлопывание пробелов
+function normalizeItemName(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// Читает кэш «товар -> категория» из Firestore
+async function readItemCategoryCache(userId: string): Promise<ItemCategoryCache> {
+  try {
+    const snap = await getDoc(doc(db, "item_category_cache", userId));
+    return (snap.data()?.items as ItemCategoryCache | undefined) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+// Записывает/обновляет сопоставления «товар -> категория» (merge, не затирает остальные)
+async function writeItemCategoryCache(userId: string, entries: ItemCategoryCache): Promise<void> {
+  if (Object.keys(entries).length === 0) return;
+  try {
+    await setDoc(doc(db, "item_category_cache", userId), { items: entries }, { merge: true });
+  } catch (error) {
+    console.warn("Не удалось обновить кэш категорий товаров:", error);
+  }
 }
 
 // "16.9.2026. 17:50:44" (формат сербских чеков, месяц/день могут быть однозначными) -> ISO
@@ -173,9 +214,10 @@ const ICON_MAP: Record<string, keyof typeof LucideIcons> = {
   umbrella: "Umbrella",
   wine: "Wine",
   wrench: "Wrench",
+  loyalty: "ScanBarcode",
 };
 
-const CATEGORY_ICONS = Object.keys(ICON_MAP).filter((key) => !["grid", "card", "chart", "goal", "plus", "arrow"].includes(key));
+const CATEGORY_ICONS = Object.keys(ICON_MAP).filter((key) => !["grid", "card", "chart", "goal", "plus", "arrow", "loyalty"].includes(key));
 
 const ICON_LABELS: Record<string, string> = {
   food: "Еда",
@@ -294,7 +336,7 @@ function evaluateExpression(expression: string): number {
 function App() {
   const telegram = window.Telegram?.WebApp;
   const [dashboard, setDashboard] = useState<Dashboard>();
-  const [activeTab, setActiveTab] = useState<Tab>("categories");
+  const [activeTab, setActiveTab] = useState<Tab>("chart");
   const [error, setError] = useState<string>();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
@@ -312,6 +354,9 @@ function App() {
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [expandedAccId, setExpandedAccId] = useState<Set<string>>(new Set());
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const [loyaltyCards, setLoyaltyCards] = useState<LoyaltyCard[]>([]);
+  const [showCardForm, setShowCardForm] = useState(false);
+  const [expandedCard, setExpandedCard] = useState<LoyaltyCard>();
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
   const goalPressTimer = useRef<number | undefined>(undefined);
@@ -339,8 +384,8 @@ useEffect(() => {
   if (window.Telegram?.WebApp) {
     window.Telegram.WebApp.ready();
     window.Telegram.WebApp.expand();
-    // Предупреждение при попытке закрыть Mini App с несохранёнными данными
-    window.Telegram.WebApp.enableClosingConfirmation();
+    // Mini App закрывается сразу, без всплывающего подтверждения Telegram
+    window.Telegram.WebApp.disableClosingConfirmation?.();
   }
 }, []);
 
@@ -396,6 +441,18 @@ useEffect(() => {
     );
 
     return () => unsubscribe();
+  }, []);
+
+  // Realtime-подписка на карты лояльности (подколлекция users/{userId}/loyalty_cards)
+  useEffect(() => {
+    const cardsQuery = query(collection(db, "users", getUserId(), "loyalty_cards"), orderBy("createdAt", "desc"));
+    return onSnapshot(
+      cardsQuery,
+      (snapshot) => {
+        setLoyaltyCards(snapshot.docs.map((cardDoc) => ({ id: cardDoc.id, ...(cardDoc.data() as Omit<LoyaltyCard, "id">) })));
+      },
+      (err) => console.error("Firestore loyalty_cards error:", err),
+    );
   }, []);
 
   const saveToFirebase = async (updated: Dashboard) => {
@@ -942,7 +999,13 @@ useEffect(() => {
         },
         // categories — названия категорий пользователя, чтобы Gemini вернул их же
         // (если не передать, функция использует дефолтный список из ТЗ)
-        body: JSON.stringify({ qrUrl: receiptUrl, categories: dashboard?.categories.map((c) => c.name) }),
+        // categoryCache — сопоставления «товар -> категория» из Firestore:
+        // сервер подставит их без обращения к Gemini (экономия токенов)
+        body: JSON.stringify({
+          qrUrl: receiptUrl,
+          categories: dashboard?.categories.map((c) => c.name),
+          categoryCache: await readItemCategoryCache(getUserId()),
+        }),
       });
 
       const payload = (await response.json().catch(() => null)) as { error?: string; dateTime?: string | null; items?: { name: string; qty: number; price: number; total: number; category: string | null }[]; total?: number } | null;
@@ -975,12 +1038,12 @@ useEffect(() => {
     void parseReceipt(receiptUrl);
   };
 
-  // Черновики позиций чека: сумма и категория, отредактированные вручную
-  const [receiptDrafts, setReceiptDrafts] = useState<Record<number, { amount: number; categoryId: string }>>({});
+  // Черновики позиций чека: название, сумма и категория, отредактированные вручную
+  const [receiptDrafts, setReceiptDrafts] = useState<Record<number, { name?: string; amount: number; categoryId: string }>>({});
   // Какие позиции чека включать в трату (по умолчанию — все)
   const [receiptExcluded, setReceiptExcluded] = useState<Set<number>>(new Set());
 
-  const setReceiptDraft = (index: number, patch: Partial<{ amount: number; categoryId: string }>) => {
+  const setReceiptDraft = (index: number, patch: Partial<{ name: string; amount: number; categoryId: string }>) => {
     setReceiptDrafts((prev) => ({ ...prev, [index]: { ...(prev[index] ?? { amount: 0, categoryId: "" }), ...patch } }));
   };
 
@@ -1000,6 +1063,7 @@ useEffect(() => {
     setReceiptError(undefined);
   };
 
+  const receiptItemName = (index: number) => receiptDrafts[index]?.name ?? parsedReceipt?.items[index]?.name ?? "";
   const receiptItemAmount = (index: number) => receiptDrafts[index]?.amount ?? parsedReceipt?.items[index]?.total ?? 0;
   const receiptItemCategoryId = (index: number) => {
     const draftId = receiptDrafts[index]?.categoryId;
@@ -1026,7 +1090,7 @@ useEffect(() => {
       return {
         id: `${Date.now()}-${order}`,
         amount: receiptItemAmount(index),
-        description: item.name,
+        description: receiptItemName(index).trim() || item.name,
         createdAt,
         category,
         qty: item.qty,
@@ -1041,6 +1105,16 @@ useEffect(() => {
         expenses: allExpenses,
         totalSpent: allExpenses.reduce((sum, e) => sum + e.amount, 0),
       });
+
+      // Успешное сохранение чека: фиксируем сопоставления «товар -> категория» в кэше
+      const cacheEntries: ItemCategoryCache = {};
+      for (const expense of newExpenses) {
+        if (!expense.description || !expense.category) continue;
+        const key = normalizeItemName(expense.description);
+        if (key) cacheEntries[key] = expense.category.name;
+      }
+      await writeItemCategoryCache(getUserId(), cacheEntries);
+
       closeReceipt();
     } catch {
       setReceiptError("Не удалось сохранить траты из чека");
@@ -1063,7 +1137,81 @@ useEffect(() => {
     setExpenseCategory(MANUAL_NO_CATEGORY);
   };
 
-  const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal || isReceiptLoading || parsedReceipt;
+  // ===== Карты лояльности =====
+  const [cardNameDraft, setCardNameDraft] = useState("");
+  const [cardCodeDraft, setCardCodeDraft] = useState("");
+  const [cardFormError, setCardFormError] = useState<string>();
+
+  // QR/штрих-код, отсканированный нативным сканером Telegram, подставляется в поле кода
+  const handleCardCodeReceived = (data?: { data?: string }) => {
+    const code = data?.data?.trim();
+    if (!code) return;
+    telegram?.offEvent("qrTextReceived", handleCardCodeReceived);
+    telegram?.closeScanQrPopup?.();
+    setCardCodeDraft(code);
+  };
+
+  const startCardCodeScan = () => {
+    if (!telegram?.showScanQrPopup) {
+      setCardFormError("Сканер недоступен: откройте Mini App в Telegram или введите код вручную");
+      return;
+    }
+    setCardFormError(undefined);
+    telegram.onEvent("qrTextReceived", handleCardCodeReceived);
+    telegram.showScanQrPopup({ text: "Отсканируйте штрих-код или QR карты" });
+  };
+
+  // Формат штрих-кода для react-barcode: EAN-13/EAN-8/UPC по длине цифр, иначе универсальный Code128
+  type BarcodeFormat = NonNullable<React.ComponentProps<typeof Barcode>["format"]>;
+  const barcodeFormatFor = (code: string): BarcodeFormat => {
+    if (/^\d{13}$/.test(code)) return "EAN13";
+    if (/^\d{8}$/.test(code)) return "EAN8";
+    if (/^\d{12}$/.test(code)) return "UPC";
+    return "CODE128";
+  };
+
+  // Автоопределение формата: чисто цифровые коды считаем штрих-кодами, остальные — QR
+  const detectCardFormat = (code: string): "qr" | "barcode" => (/^\d{6,20}$/.test(code) ? "barcode" : "qr");
+
+  const addLoyaltyCard = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("cardName") ?? "").trim();
+    const code = cardCodeDraft.trim();
+    const formatChoice = String(form.get("cardFormat") ?? "auto");
+
+    if (!name || !code) return;
+
+    const format: "qr" | "barcode" = formatChoice === "auto" ? detectCardFormat(code) : (formatChoice as "qr" | "barcode");
+    const cardId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    try {
+      await setDoc(doc(db, "users", getUserId(), "loyalty_cards", cardId), {
+        name,
+        code,
+        format,
+        createdAt: new Date().toISOString(),
+      });
+      setShowCardForm(false);
+      setCardNameDraft("");
+      setCardCodeDraft("");
+      setCardFormError(undefined);
+    } catch {
+      setCardFormError("Не удалось сохранить карту");
+    }
+  };
+
+  const removeLoyaltyCard = async (card: LoyaltyCard) => {
+    if (!window.confirm(`Удалить карту «${card.name}»?`)) return;
+    try {
+      await deleteDoc(doc(db, "users", getUserId(), "loyalty_cards", card.id));
+      setExpandedCard(undefined);
+    } catch {
+      setError("Не удалось удалить карту");
+    }
+  };
+
+  const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal || isReceiptLoading || parsedReceipt || showCardForm || expandedCard;
 
   return (
     <main className={isModalOpen ? "modal-open" : ""} onClick={() => { setShowMonthPicker(false); setIconPickerOpen(false); }}>
@@ -1204,9 +1352,8 @@ useEffect(() => {
         </>
       )}
 
-      {activeTab === "categories" && (
-        <>
-          {editingCategory ? (
+      {/* Модалки категорий — на корневом уровне, чтобы «Добавить категорию» работала и из вкладки «График» */}
+      {editingCategory ? (
             <div 
               className="modal-backdrop" 
               onMouseDown={(e) => {
@@ -1289,53 +1436,10 @@ useEffect(() => {
             </div>
           ) : null}
 
-          <section className="category-icon-grid">
-            {sortedCategories.map((category) => (
-              <button
-                className="category-icon-button"
-                key={category.id}
-                onPointerDown={() => startCategoryPress(category)}
-                onPointerUp={endCategoryPress}
-                onPointerCancel={endCategoryPress}
-                onContextMenu={(e) => e.preventDefault()}
-                onClick={() => {
-                  if (didLongPress.current) {
-                    didLongPress.current = false;
-                    return;
-                  }
-                  setExpenseCategory(category);
-                }}
-              >
-                <span className="system-icon-bg"><Icon name={category.icon || "other"} /></span>
-                <b>{category.name}</b>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
-                  <small>{formatMoney(categoryStats.find((item) => item.id === category.id)?.amount ?? 0)}</small>
-                  {category.budgets?.[selectedMonth] && (
-                    <small style={{ fontSize: '9px', opacity: 0.8 }}>from {formatMoney(category.budgets[selectedMonth])}</small>
-                  )}
-                </div>
-              </button>
-            ))}
-            <button
-              className="category-icon-button add-category-button"
-              onClick={() => {
-                setEditingCategory(undefined);
-                setCategoryIconValue("other");
-                setIconPickerOpen(false);
-                setShowCategoryForm(true);
-              }}
-            >
-              <span><Icon name="plus" /></span>
-              <b>Add</b>
-              <small style={{ fontSize: '9px' }}>{'\u00A0'}</small>
-            </button>
-          </section>
-        </>
-      )}
-
       {activeTab === "chart" && (
-        <>
-          <section className="chart-card">
+        <div className="chart-tab">
+          {/* ===== Sticky-блок: диаграмма и легенда не уходят при скролле ===== */}
+          <section className="chart-card chart-card--sticky">
             <div className="donut" style={{ background: chartBackground }}>
               <div>
                 <small>Total</small>
@@ -1353,7 +1457,57 @@ useEffect(() => {
               {categoryStats.length === 0 && <p className="empty">Data will appear after adding expenses.</p>}
             </div>
           </section>
-        </>
+
+          {/* ===== Скроллируемая часть: сетка категорий под графиком ===== */}
+          <section className="chart-categories">
+            <div className="section-title"><h2>Категории</h2></div>
+            <div className="category-icon-grid">
+              {sortedCategories.map((category) => (
+                <button
+                  className="category-icon-button"
+                  key={category.id}
+                  onPointerDown={() => startCategoryPress(category)}
+                  onPointerUp={endCategoryPress}
+                  onPointerCancel={endCategoryPress}
+                  onContextMenu={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (didLongPress.current) {
+                      didLongPress.current = false;
+                      setEditingCategory(category);
+                      return;
+                    }
+                    // Функционал добавления траты отдан центральной кнопке «+» —
+                    // тап по категории просто редактирует её
+                    setEditingCategory(category);
+                  }}
+                >
+                  <span className="system-icon-bg"><Icon name={category.icon || "other"} /></span>
+                  <b>{category.name}</b>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
+                    <small>{formatMoney(categoryStats.find((item) => item.id === category.id)?.amount ?? 0)}</small>
+                    {category.budgets?.[selectedMonth] && (
+                      <small style={{ fontSize: '9px', opacity: 0.8 }}>from {formatMoney(category.budgets[selectedMonth])}</small>
+                    )}
+                  </div>
+                </button>
+              ))}
+              {/* Кнопка «Добавить категорию» — последний элемент сетки */}
+              <button
+                className="category-icon-button add-category-button"
+                onClick={() => {
+                  setEditingCategory(undefined);
+                  setCategoryIconValue("other");
+                  setIconPickerOpen(false);
+                  setShowCategoryForm(true);
+                }}
+              >
+                <span><Icon name="plus" /></span>
+                <b>Add</b>
+                <small style={{ fontSize: '9px' }}>{'\u00A0'}</small>
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       {activeTab === "savings" && (
@@ -1525,18 +1679,67 @@ useEffect(() => {
         </>
       )}
 
+      {activeTab === "cards" && (
+        <>
+          {loyaltyCards.length === 0 ? (
+            <section className="savings-card">
+              <span className="savings-icon"><Icon name="loyalty" /></span>
+              <h2>Карты лояльности</h2>
+              <p>Добавьте дисконтные карты магазинов — и показывайте код прямо с экрана на кассе.</p>
+              <button type="button" onClick={() => { setCardNameDraft(""); setCardCodeDraft(""); setCardFormError(undefined); setShowCardForm(true); }}>Добавить карту</button>
+            </section>
+          ) : (
+            <div className="cards-list">
+              {loyaltyCards.map((card) => (
+                <button
+                  key={card.id}
+                  type="button"
+                  className="loyalty-card"
+                  onClick={() => {
+                    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
+                    setExpandedCard(card);
+                  }}
+                >
+                  <span className="loyalty-card-icon"><Icon name="loyalty" /></span>
+                  <div className="loyalty-card-info">
+                    <strong>{card.name}</strong>
+                    <small>{card.code}</small>
+                  </div>
+                  <Icon name="arrow" />
+                </button>
+              ))}
+              <button
+                type="button"
+                className="add-card-button"
+                onClick={() => { setCardNameDraft(""); setCardCodeDraft(""); setCardFormError(undefined); setShowCardForm(true); }}
+              >
+                <Icon name="plus" />
+                <span>Добавить карту</span>
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
       <nav className={`floating-tab-bar${isModalOpen ? " tab-bar-hidden" : ""}`} aria-label="Основная навигация">
-        <button
-          type="button"
-          className={activeTab === "categories" ? "active" : ""}
-          onClick={() => {
-            window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
-            setActiveTab("categories");
-          }}
-        >
-          <Icon name="grid" />
-          <span>Категории</span>
-        </button>
+        {/* SVG-фон бара: скруглённые края + плавная выемка (arc/curve) вокруг центральной FAB */}
+        <svg className="tab-bar-shape" viewBox="0 0 390 64" preserveAspectRatio="none" aria-hidden="true">
+          <path
+            d="M 32 0
+               H 143
+               C 154 0 158 5 163 12
+               C 171 25 181 38 195 38
+               C 209 38 219 25 227 12
+               C 232 5 236 0 247 0
+               H 358
+               A 32 32 0 0 1 390 32
+               A 32 32 0 0 1 358 64
+               H 32
+               A 32 32 0 0 1 0 32
+               A 32 32 0 0 1 32 0
+               Z"
+          />
+        </svg>
         <button
           type="button"
           className={activeTab === "chart" ? "active" : ""}
@@ -1550,12 +1753,6 @@ useEffect(() => {
         </button>
         <button
           type="button"
-          className="fab-button"
-          aria-label="Добавить"
-          onClick={openAddMenu}
-        />
-        <button
-          type="button"
           className={activeTab === "expenses" ? "active" : ""}
           onClick={() => {
             window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
@@ -1564,6 +1761,23 @@ useEffect(() => {
         >
           <Icon name="card" />
           <span>Траты</span>
+        </button>
+        <button
+          type="button"
+          className="fab-button"
+          aria-label="Добавить"
+          onClick={openAddMenu}
+        />
+        <button
+          type="button"
+          className={activeTab === "cards" ? "active" : ""}
+          onClick={() => {
+            window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
+            setActiveTab("cards");
+          }}
+        >
+          <Icon name="loyalty" />
+          <span>Карты</span>
         </button>
         <button
           type="button"
@@ -1659,10 +1873,21 @@ useEffect(() => {
                       type="checkbox"
                       checked={included}
                       onChange={() => toggleReceiptItem(index)}
+                      aria-label={`Включить позицию ${item.name}`}
                     />
                     <div className="receipt-item-info">
-                      <strong>{item.name}</strong>
-                      <small>{item.qty} × {formatMoney(item.price)}</small>
+                      {/* Название товара — редактируемое поле */}
+                      <input
+                        type="text"
+                        maxLength={300}
+                        className="receipt-name-input"
+                        defaultValue={item.name}
+                        onChange={(e) => setReceiptDraft(index, { name: e.target.value })}
+                        onFocus={(e) => { operatorInputRef.current = e.currentTarget; }}
+                        aria-label={`Название позиции ${item.name}`}
+                      />
+                      <small className="receipt-item-qty">{item.qty} × {formatMoney(item.price)}</small>
+                      {/* Стоимость + категория — в одну строку */}
                       <div className="receipt-item-controls">
                         <input
                           type="text"
@@ -1676,7 +1901,15 @@ useEffect(() => {
                         />
                         <select
                           value={receiptItemCategoryId(index)}
-                          onChange={(e) => setReceiptDraft(index, { categoryId: e.target.value })}
+                          onChange={(e) => {
+                            setReceiptDraft(index, { categoryId: e.target.value });
+                            // Ручная смена категории — сразу обновляем кэш «товар -> категория»
+                            const selectedCategory = dashboard?.categories.find((c) => c.id === e.target.value);
+                            if (selectedCategory) {
+                              const key = normalizeItemName(item.name);
+                              if (key) void writeItemCategoryCache(getUserId(), { [key]: selectedCategory.name });
+                            }
+                          }}
                           aria-label={`Категория позиции ${item.name}`}
                         >
                           <option value="">Без категории</option>
@@ -1709,6 +1942,84 @@ useEffect(() => {
         </div>
       )}
 
+      {/* ===== Модалка добавления карты лояльности ===== */}
+      {showCardForm && (
+        <div className="modal-backdrop" onClick={() => setShowCardForm(false)}>
+          <form
+            className="expense-modal expense-modal--plain"
+            onSubmit={(e) => { e.preventDefault(); void addLoyaltyCard(e); }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <input
+              name="cardName"
+              maxLength={60}
+              placeholder="Название магазина"
+              required
+              autoFocus
+              value={cardNameDraft}
+              onChange={(e) => setCardNameDraft(e.target.value)}
+            />
+            <div className="card-code-row">
+              <input
+                name="cardCode"
+                maxLength={100}
+                placeholder="Штрих-код / QR (числа или текст)"
+                required
+                value={cardCodeDraft}
+                onChange={(e) => { setCardCodeDraft(e.target.value); setCardFormError(undefined); }}
+                onFocus={(e) => { operatorInputRef.current = e.currentTarget; }}
+              />
+              <button type="button" className="card-scan-button" onClick={startCardCodeScan} aria-label="Сканировать код карты">
+                <Icon name="loyalty" />
+              </button>
+            </div>
+            <select name="cardFormat" defaultValue="auto">
+              <option value="auto">Формат: определить автоматически</option>
+              <option value="barcode">Штрих-код (Code128 / EAN-13)</option>
+              <option value="qr">QR-код</option>
+            </select>
+            {cardFormError && <p className="receipt-error-text">{cardFormError}</p>}
+            <div className="button-row">
+              <button type="submit" disabled={isSubmitting}>Сохранить карту</button>
+              <button type="button" className="danger-button" onClick={() => setShowCardForm(false)}>Отмена</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ===== Полноэкранный показ кода карты (для кассы) ===== */}
+      {expandedCard && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setExpandedCard(undefined);
+          }}
+        >
+          <div className="loyalty-fullscreen" onClick={(e) => e.stopPropagation()}>
+            <b>{expandedCard.name}</b>
+            <small className="loyalty-fullscreen-code">{expandedCard.code}</small>
+            <div className="loyalty-codes">
+              {expandedCard.format !== "qr" && (
+                <Barcode
+                  value={expandedCard.code}
+                  format={barcodeFormatFor(expandedCard.code)}
+                  width={1.7}
+                  height={110}
+                  displayValue={false}
+                  background="#ffffff"
+                  lineColor="#000000"
+                />
+              )}
+              <QRCodeSVG value={expandedCard.code} size={expandedCard.format === "qr" ? 260 : 170} bgColor="#ffffff" fgColor="#000000" level="M" />
+            </div>
+            <div className="button-row">
+              <button type="button" onClick={() => setExpandedCard(undefined)}>Свернуть</button>
+              <button type="button" className="danger-button" onClick={() => void removeLoyaltyCard(expandedCard)}>Удалить</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ===== iOS Action Sheet: «+» меню ===== */}
       {isAddMenuOpen && (
         <div
@@ -1732,14 +2043,14 @@ useEffect(() => {
               className="add-menu-item"
               onClick={startQrScan}
             >
-              📷 Сканировать QR-код чека
+              Сканировать QR-код чека
             </button>
             <button
               type="button"
               className="add-menu-item"
               onClick={openManualExpense}
             >
-              ✏️ Ввести вручную
+              Ввести вручную
             </button>
           </div>
         </div>

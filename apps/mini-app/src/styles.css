@@ -553,6 +553,31 @@ input:focus, select:focus { border-color: var(--accent-color); }
 .legend > div { display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 9px; font-size: 14px; }
 .legend i { width: 10px; height: 10px; border-radius: 50%; }
 
+/* ===== Экран аналитики: sticky-график + скроллируемая сетка категорий ===== */
+.chart-tab { display: flex; flex-direction: column; gap: 14px; }
+
+/* Диаграмма и легенда зафиксированы сверху: прилипают к верху скролл-области main */
+.chart-card--sticky {
+  position: sticky;
+  top: -26px; /* компенсация верхнего padding скролл-области — карточка встаёт вплотную к краю */
+  z-index: 10;
+  margin: -4px -6px 0;
+  padding: 22px 28px 18px;
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--text-color) 10%, transparent);
+}
+
+/* Легенда внутри sticky-блока не должна занимать весь экран: при длинном списке — скролл */
+.chart-card--sticky .legend {
+  max-height: 21dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 4px;
+}
+
+/* Сетка категорий скроллится вместе со страницей под зафиксированным графиком */
+.chart-categories .category-icon-grid { padding-bottom: 4px; }
+
 .accordion-list { display: grid; gap: 10px; }
 .accordion-item { overflow: hidden; border-radius: 18px; background: var(--secondary-bg-color); box-shadow: 0 4px 12px color-mix(in srgb, var(--text-color) 4%, transparent); }
 .accordion-trigger { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 16px; color: inherit; background: transparent; transition: background 0.2s ease; }
@@ -761,7 +786,7 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   }
 }
 
-/* ===== Нативный iOS Floating Tab Bar (Glassmorphic) ===== */
+/* ===== Floating Tab Bar (SVG-фон с плавной выемкой вокруг FAB) ===== */
 .floating-tab-bar {
   position: fixed;
   z-index: 1000;
@@ -774,25 +799,42 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   height: 64px;
   padding: 0 10px;
   box-sizing: border-box;
-  border-radius: 32px;
-  background: color-mix(in srgb, var(--secondary-bg-color) 78%, transparent);
-  backdrop-filter: blur(25px) saturate(180%);
-  -webkit-backdrop-filter: blur(25px) saturate(180%);
-  border: 0.5px solid var(--border-color);
+  /* Фон/рамки/выемка рисует .tab-bar-shape — контейнер прозрачный */
 }
 
-/* ===== Центральная кнопка (FAB) ===== */
+/* SVG-паттерн бара: скруглённые края + дуга-выемка в центре */
+.tab-bar-shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  filter: drop-shadow(0 8px 24px color-mix(in srgb, var(--text-color) 14%, transparent));
+}
+
+.tab-bar-shape path {
+  fill: color-mix(in srgb, var(--secondary-bg-color) 88%, transparent);
+  stroke: var(--border-color);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Кнопки табов поверх SVG-фона */
+.floating-tab-bar button { position: relative; }
+
+/* ===== Центральная кнопка (FAB): приподнята и выступает над линией бара ===== */
 .fab-button {
   position: relative;
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   color: #ffffff;
   background: #0A84FF;
-  transform: translateY(-4px);
-  box-shadow: 0 4px 12px rgba(10, 132, 255, 0.4);
+  /* Кружок ложится внутрь SVG-выемки (глубина 38), выступая вверх над баром */
+  transform: translateY(-26px);
+  box-shadow: 0 6px 16px rgba(10, 132, 255, 0.45);
 }
 
 /* Белый плюс по центру кнопки */
@@ -803,7 +845,7 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   left: 50%;
   content: "";
   border-radius: 2px;
-  background: var(--hint-color);
+  background: #ffffff;
   transform: translate(-50%, -50%);
 }
 
@@ -837,7 +879,13 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
 }
 
 .floating-tab-bar button.active { color: var(--link-color); }
-.floating-tab-bar button span { color: inherit; }
+.floating-tab-bar button span {
+  color: inherit;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Скрытие таб-бара при открытом модальном окне траты */
 .floating-tab-bar {
@@ -954,6 +1002,9 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   gap: 8px;
   overflow-y: auto;
   min-height: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px;
 }
 
 .receipt-item {
@@ -969,9 +1020,22 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
 .receipt-item input[type="checkbox"] { margin-top: 3px; accent-color: var(--link-color); }
 .receipt-item--off { opacity: 0.45; }
 .receipt-item-info { display: grid; gap: 6px; flex: 1; min-width: 0; }
-.receipt-item-info strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.receipt-item-info small { color: var(--hint-color); font-size: 11px; }
 
+/* Название товара — редактируемое поле на всю ширину */
+.receipt-name-input {
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 9px;
+  border: 1px solid var(--border-color);
+  background: var(--secondary-bg-color);
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-color);
+}
+
+.receipt-item-qty { color: var(--hint-color); font-size: 11px; }
+
+/* Стоимость + категория — в одну строку, умещаются по ширине карточки */
 .receipt-item-controls { display: flex; gap: 6px; }
 .receipt-item-controls input,
 .receipt-item-controls select {
@@ -1009,3 +1073,100 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
 }
 
 .receipt-error-text { margin: 0 0 8px; text-align: center; font-size: 14px; }
+
+/* ===== Карты лояльности ===== */
+.cards-list { display: grid; gap: 10px; }
+
+.loyalty-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--secondary-bg-color);
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  text-align: left;
+}
+
+.loyalty-card-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: none;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--link-color) 14%, transparent);
+  color: var(--link-color);
+}
+
+.loyalty-card-info { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.loyalty-card-info strong { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loyalty-card-info small { color: var(--hint-color); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.loyalty-card > svg:last-child { color: var(--hint-color); flex: none; }
+
+.add-card-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1.5px dashed var(--border-color);
+  background: transparent;
+  color: var(--link-color);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+/* Строка «код + кнопка сканера» в форме добавления */
+.card-code-row { display: flex; gap: 8px; }
+.card-code-row input { flex: 1; min-width: 0; }
+.card-scan-button {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  flex: none;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--secondary-bg-color);
+  color: var(--link-color);
+}
+
+/* Полноэкранный просмотр кода карты */
+.loyalty-fullscreen {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: min(92vw, 380px);
+  max-height: 86dvh;
+  padding: 22px 18px;
+  border-radius: 20px;
+  background: var(--bg-color, var(--secondary-bg-color));
+  overflow-y: auto;
+}
+
+.loyalty-fullscreen > b { font-size: 18px; text-align: center; }
+.loyalty-fullscreen-code {
+  color: var(--hint-color);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  word-break: break-all;
+  text-align: center;
+}
+
+.loyalty-codes {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 14px;
+  background: #ffffff;
+  width: 100%;
+}
+
+/* react-barcode рендерит svg с текстовым названием — центрируем и вписываем в ширину */
+.loyalty-codes svg { max-width: 100%; height: auto; }

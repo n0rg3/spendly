@@ -152,17 +152,39 @@ function parseReceiptHtml(html) {
 }
 
 // --- Gemini: категоризация позиций ---
-async function categorizeReceiptItems(items, categoriesList) {
+async function categorizeReceiptItems(items, categoriesList, categoryCache = {}) {
   if (items.length === 0) return [];
+
+  // Кэш сопоставлений «товар -> категория» (экономия токенов Gemini).
+  // Ключ — нормализованное имя товара (lowercase, trimmed).
+  const normalize = (name) => String(name || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  // Сначала подставляем категории из кэша — такие позиции в Gemini не уходят
+  const resolved = items.map((item) => {
+    const cachedCategory = categoryCache[normalize(item.name)] ?? null;
+    return {
+      item,
+      cachedCategory: cachedCategory && categoriesList.includes(cachedCategory) ? cachedCategory : null,
+    };
+  });
+
+  const uncached = resolved.filter((entry) => entry.cachedCategory === null);
+
+  // Всё уже в кэше — Gemini не нужен вовсе
+  if (uncached.length === 0) {
+    return resolved.map(({ item, cachedCategory }) => ({ ...item, category: cachedCategory }));
+  }
+
   if (!process.env.GEMINI_API_KEY || categoriesList.length === 0) {
-    return items.map((item) => ({ ...item, category: null }));
+    return resolved.map(({ item, cachedCategory }) => ({ ...item, category: cachedCategory }));
   }
 
   const prompt = [
     `Разбей список товаров из сербского чека по категориям: ${JSON.stringify(categoriesList)}.`,
     "Каждой позиции присвой ровно одну категорию из списка; если ничего не подходит — null.",
     "Верни СТРОГО JSON-массив объектов {name, qty, price, total, category} — без markdown, пояснений и любого другого текста.",
-    `Товары: ${JSON.stringify(items)}`,
+    // Важно: отправляем ТОЛЬКО позиции, которых нет в кэше
+    `Товары: ${JSON.stringify(uncached.map((entry) => entry.item))}`,
   ].join("\n");
 
   // Модель из env, иначе актуальный дефолт. Если модель снята с поддержки (404),
@@ -186,8 +208,15 @@ async function categorizeReceiptItems(items, categoriesList) {
       const result = await model.generateContent(prompt);
       const parsed = JSON.parse(result.response.text() || "[]");
 
-      return items.map((item, index) => {
-        const aiCategory = typeof parsed[index]?.category === "string" ? parsed[index].category : null;
+      // Мержим категории от LLM: ответы приходят только для некэшированных позиций
+      // (тот же порядок, что и в списке uncached), закэшированные уже проставлены
+      let aiIndex = 0;
+      return resolved.map(({ item, cachedCategory }) => {
+        if (cachedCategory !== null) {
+          return { ...item, category: cachedCategory };
+        }
+        const aiItem = parsed[aiIndex++];
+        const aiCategory = typeof aiItem?.category === "string" ? aiItem.category : null;
         return { ...item, category: aiCategory && allowed.has(aiCategory) ? aiCategory : null };
       });
     } catch (error) {
@@ -262,7 +291,13 @@ export default async function handler(req, res) {
         ? body.categories.map(String)
         : DEFAULT_CATEGORIES;
 
-    const items = await categorizeReceiptItems(receipt.items, categoriesList);
+    const items = await categorizeReceiptItems(
+      receipt.items,
+      categoriesList,
+      // Кэш сопоставлений «товар -> категория» от клиента (Firestore клиента):
+      // закэшированные позиции категоризируются без обращения к Gemini
+      typeof body.categoryCache === "object" && body.categoryCache !== null ? body.categoryCache : {},
+    );
 
     return send(200, { dateTime: receipt.dateTime, items, total: receipt.total });
   } catch (error) {

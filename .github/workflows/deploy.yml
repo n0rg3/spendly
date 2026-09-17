@@ -36,8 +36,9 @@ jobs:
           cache: 'pnpm'
 
       # 2. Устанавливаем зависимости монорепозитория
+      # --frozen-lockfile: сборка падает, если pnpm-lock.yaml не синхронизирован с package.json
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       # 3. Собираем только Mini App (избегаем сборки лишних пакетов)
       - name: Build Mini App

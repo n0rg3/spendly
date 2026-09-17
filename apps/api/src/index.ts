@@ -648,18 +648,48 @@ function parseReceiptHtml(html: string): ParsedReceipt {
 // ===== Автокатегоризация позиций чека через Gemini =====
 type CategorizedReceiptItem = ReceiptItem & { category: string | null };
 
+// Кэш сопоставлений «товар -> категория» (экономия токенов Gemini).
+// Firestore: коллекция item_category_cache, документ = telegramId,
+// поле items = { [нормализованное имя товара]: название категории }.
+type ItemCategoryCache = Record<string, string>;
+
+// Нормализация имени товара: lowercase, trim, схлопывание пробелов
+function normalizeItemName(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
 const appLog = app.log;
 
-async function categorizeReceiptItems(items: ReceiptItem[], categoriesList: string[]): Promise<CategorizedReceiptItem[]> {
+async function categorizeReceiptItems(
+  items: ReceiptItem[],
+  categoriesList: string[],
+  cache: ItemCategoryCache = {},
+): Promise<CategorizedReceiptItem[]> {
   // Без товаров категоризировать нечего
   if (items.length === 0) return [];
 
-  // Нет ключа или списка категорий — возвращаем позиции с category: null
+  // Сначала подставляем категории из кэша — такие позиции в Gemini не уходят
+  const resolved = items.map((item) => {
+    const cachedCategory = cache[normalizeItemName(item.name)] ?? null;
+    return {
+      item,
+      cachedCategory: cachedCategory && categoriesList.includes(cachedCategory) ? cachedCategory : null,
+    };
+  });
+
+  const uncached = resolved.filter((entry) => entry.cachedCategory === null);
+
+  // Всё уже в кэше — Gemini не нужен вовсе
+  if (uncached.length === 0) {
+    return resolved.map(({ item, cachedCategory }) => ({ ...item, category: cachedCategory }));
+  }
+
+  // Нет ключа или списка категорий — возвращаем позиции (кэш уже применён выше)
   if (!GEMINI_API_KEY || categoriesList.length === 0) {
-    return items.map((item) => ({ ...item, category: null }));
+    return resolved.map(({ item, cachedCategory }) => ({ ...item, category: cachedCategory }));
   }
 
   const prompt = [
@@ -669,7 +699,8 @@ async function categorizeReceiptItems(items: ReceiptItem[], categoriesList: stri
     "The response must be a JSON array in this exact format:",
     '[{ "name": "MLEKO 2.8%", "qty": 1, "price": 150, "total": 150, "category": "Продукты" }]',
     `Available categories: ${JSON.stringify(categoriesList)}`,
-    `Items: ${JSON.stringify(items)}`,
+    // Важно: отправляем ТОЛЬКО позиции, которых нет в кэше
+    `Items: ${JSON.stringify(uncached.map((entry) => entry.item))}`,
   ].join("\n");
 
   try {
@@ -699,9 +730,14 @@ async function categorizeReceiptItems(items: ReceiptItem[], categoriesList: stri
     const parsed = JSON.parse(raw) as { category?: string }[];
     const allowed = new Set(categoriesList);
 
-    // Мержим категории от LLM к исходным позициям; нераспознанные ответы — null
-    return items.map((item, index) => {
-      const aiItem = parsed[index];
+    // Мержим категории от LLM: ответы приходят только для некэшированных позиций
+    // (тот же порядок, что и в списке uncached), закэшированные уже проставлены
+    let aiIndex = 0;
+    return resolved.map(({ item, cachedCategory }) => {
+      if (cachedCategory !== null) {
+        return { ...item, category: cachedCategory };
+      }
+      const aiItem = parsed[aiIndex++];
       const aiCategory = typeof aiItem?.category === "string" ? aiItem.category : null;
       return {
         ...item,
@@ -754,10 +790,32 @@ app.post<{ Body: { qrUrl?: string } }>("/api/receipts/parse", async (request, re
   }
 
   // Автокатегоризация позиций по категориям пользователя
+  // 1) Читаем кэш сопоставлений «товар -> категория» из Firestore
+  const cacheDocRef = firestore.collection("item_category_cache").doc(request.user.telegramId);
+  const cacheDoc = await cacheDocRef.get();
+  const cache = (cacheDoc.data()?.items as ItemCategoryCache | undefined) ?? {};
+
+  // 2) В Gemini уходят только позиции, которых нет в кэше
   const categorizedItems = await categorizeReceiptItems(
     receipt.items,
     request.dashboard.categories.map((c) => c.name),
+    cache,
   );
+
+  // 3) Новые сопоставления записываем обратно в кэш
+  const newEntries: ItemCategoryCache = {};
+  for (const item of categorizedItems) {
+    if (!item.category) continue;
+    const key = normalizeItemName(item.name);
+    if (!key || cache[key] === item.category) continue;
+    newEntries[key] = item.category;
+  }
+  if (Object.keys(newEntries).length > 0) {
+    // set с merge — не затирает чужие записи в документе
+    await cacheDocRef.set({ items: newEntries }, { merge: true }).catch((err) => {
+      appLog.error(err, "Failed to write item category cache");
+    });
+  }
 
   return reply.send({
     dateTime: receipt.dateTime,

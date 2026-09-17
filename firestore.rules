@@ -1,0 +1,51 @@
+rules_version = '2';
+
+// Правила безопасности Firestore для Spendly.
+//
+// ВАЖНО: приложение использует прямой доступ по Telegram userId (без Firebase Auth),
+// поэтому из клиентских правил невозможно криптографически проверить личность
+// вызывающего — telegramId передаётся просто как путь документа. Правила ниже
+// валидируют структуру данных (documentId() == путь), но НЕ аутентифицируют
+// пользователя. Это приемлемо для персонального трекера расходов; для строгой
+// аутентификации потребуется связка Telegram <-> custom token Firebase Auth.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===== Профили пользователей (дашборд: категории, траты, накопления) =====
+    // Документ называется по Telegram userId — совпадение проверяем через documentId()
+    match /users/{userId} {
+      allow read, write: if documentId() == userId;
+
+      // ===== Карты лояльности (подколлекция профиля) =====
+      // Карта привязана к владельцу пути; проверяем совпадение userId в данных
+      match /loyalty_cards/{cardId} {
+        allow read: if documentId() == userId;
+        allow create: if documentId() == userId
+          && request.resource.data.keys().hasOnly(['name', 'code', 'format', 'createdAt'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 60
+          && request.resource.data.code is string
+          && request.resource.data.code.size() > 0
+          && request.resource.data.code.size() <= 100
+          && request.resource.data.format in ['qr', 'barcode']
+          && request.resource.data.createdAt is string;
+        allow update, delete: if documentId() == userId;
+      }
+    }
+
+    // ===== Кэш категорий товаров (экономия токенов Gemini) =====
+    // Корневая коллекция: item_category_cache/{telegramId}, поле items = {товар -> категория}
+    // Читается и сервером (admin SDK игнорирует правила), и клиентом перед запросом чека
+    match /item_category_cache/{userId} {
+      allow read: if documentId() == userId;
+      allow create: if documentId() == userId
+        && request.resource.data.keys().hasOnly(['items'])
+        && request.resource.data.items is map;
+      // update с merge:true — клиент и API дописывают новые сопоставления
+      allow update: if documentId() == userId
+        && request.resource.data.items is map;
+      allow delete: if documentId() == userId;
+    }
+  }
+}
