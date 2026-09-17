@@ -65,15 +65,11 @@ type LoyaltyCard = {
 
 // ===== Коды карт лояльности: форматы, валидация, очистка сканов =====
 
-// Формат штрих-кода для react-barcode: EAN-13/EAN-8/UPC по длине цифр, иначе универсальный Code128
+// Формат штрих-кода для react-barcode: ровно 13 цифр — EAN13, всё остальное
+// (включая буквенные коды вроде «mRS») — универсальный Code128
 type BarcodeFormat = NonNullable<BarcodeProps["format"]>;
 
-const barcodeFormatFor = (code: string): BarcodeFormat => {
-  if (/^\d{13}$/.test(code)) return "EAN13";
-  if (/^\d{8}$/.test(code)) return "EAN8";
-  if (/^\d{12}$/.test(code)) return "UPC";
-  return "CODE128";
-};
+const barcodeFormatFor = (code: string): BarcodeFormat => (/^\d{13}$/.test(code) ? "EAN13" : "CODE128");
 
 // Автоопределение формата: чисто цифровые коды считаем штрих-кодами, остальные — QR
 const detectCardFormat = (code: string): "qr" | "barcode" => (/^\d{6,20}$/.test(code) ? "barcode" : "qr");
@@ -91,14 +87,10 @@ function gs1ChecksumOk(digits: string): boolean {
 
 // Проверка, что jsbarcode реально сможет отрисовать значение в выбранном формате
 // (иначе react-barcode падает с ошибкой внутри эффекта → на экране пустая белая плашка)
-const barcodeValueOk = (code: string, format: BarcodeFormat): boolean => {
-  switch (format) {
-    case "EAN13": return /^\d{12,13}$/.test(code) && (code.length === 12 || gs1ChecksumOk(code));
-    case "EAN8": return /^\d{7,8}$/.test(code) && (code.length === 7 || gs1ChecksumOk(code));
-    case "UPC": return /^\d{11,12}$/.test(code) && (code.length === 11 || gs1ChecksumOk(code));
-    default: return true; // CODE128 кодирует любой печатный ASCII
-  }
-};
+const barcodeValueOk = (code: string, format: BarcodeFormat): boolean =>
+  format === "EAN13"
+    ? /^\d{12,13}$/.test(code) && (code.length === 12 || gs1ChecksumOk(code))
+    : isAsciiPrintable(code); // CODE128 кодирует любой печатный ASCII
 
 const isAsciiPrintable = (code: string): boolean => /^[\x20-\x7e]+$/.test(code);
 
@@ -147,6 +139,16 @@ const DEFAULT_DASHBOARD: Dashboard = {
   userCreatedAt: new Date().toISOString(),
   savingsGoals: [],
 };
+
+// Палитра fallback-цветов: используется и в секторах диаграммы, и в плашках
+// категорий под графиком (единый источник цветов → диаграмма и сетка совпадают)
+const CATEGORY_FALLBACK_COLORS = [
+  "var(--button-color)",
+  "color-mix(in srgb, var(--button-color) 80%, white)",
+  "color-mix(in srgb, var(--button-color) 60%, white)",
+  "color-mix(in srgb, var(--button-color) 40%, white)",
+  "color-mix(in srgb, var(--button-color) 20%, white)",
+];
 
 // Псевдо-категория: модалка траты открыта вручную (без категории)
 const MANUAL_NO_CATEGORY: Category = { id: "", name: "Без категории", icon: "other", color: null };
@@ -410,38 +412,33 @@ class CodeErrorBoundary extends Component<{ children: ReactNode; fallback: React
   }
 }
 
-// Рендер кода карты: запрошенный формат → CODE128 (для ASCII) → QR-код как fallback.
-// Гарантирует, что вместо белой плашки всегда отображается сканируемый код.
+// Рендер кода карты: штрих-код (EAN13 для 13 цифр, иначе CODE128) → QR-код как fallback.
+// CodeErrorBoundary ловит ошибки jsbarcode (они происходят внутри useEffect и не ловятся
+// обычным try/catch) — вместо белой плашки всегда отображается читаемый код.
 function CardCodeView({ card }: { card: LoyaltyCard }) {
-  const [barcodeFailed, setBarcodeFailed] = useState(false);
-  // Смена карты или её кода сбрасывает флаг ошибки
-  useEffect(() => {
-    setBarcodeFailed(false);
-  }, [card.id, card.code]);
-
-  const qrFallback = (
-    <QRCodeSVG
-      value={card.code}
-      size={card.format === "qr" ? 260 : 200}
-      bgColor="#ffffff"
-      fgColor="#000000"
-      level="M"
-    />
-  );
-
   if (!card.code) {
     return <p className="loyalty-codes-empty">У карты нет кода</p>;
   }
 
+  const qrFallback = (
+    <div className="loyalty-code-qr">
+      <QRCodeSVG
+        value={card.code}
+        size={card.format === "qr" ? 260 : 200}
+        bgColor="#ffffff"
+        fgColor="#000000"
+        level="M"
+      />
+    </div>
+  );
+
   let format: BarcodeFormat | null = null;
-  if (card.format === "barcode" && !barcodeFailed) {
+  if (card.format === "barcode") {
     const detected = barcodeFormatFor(card.code);
     if (barcodeValueOk(card.code, detected)) {
       format = detected;
-    } else if (isAsciiPrintable(card.code)) {
-      // Невалидный EAN/UPC (например, битая контрольная сумма) — рисуем Code128
-      format = "CODE128";
     }
+    // Невалидный EAN/UPC (буквы, битая контрольная сумма) — QR-фоллбек ниже
   }
 
   if (!format) {
@@ -449,18 +446,20 @@ function CardCodeView({ card }: { card: LoyaltyCard }) {
   }
 
   return (
-    <CodeErrorBoundary fallback={qrFallback}>
-      <Barcode
-        key={`${card.id}-${format}-${barcodeFailed}`}
-        value={card.code}
-        format={format}
-        width={2}
-        height={80}
-        displayValue={false}
-        background="#ffffff"
-        lineColor="#000000"
-      />
-    </CodeErrorBoundary>
+    <div className="loyalty-code-box">
+      {/* key сбрасывает состояние boundary при смене карты/кода */}
+      <CodeErrorBoundary key={`${card.id}-${card.code}`} fallback={qrFallback}>
+        <Barcode
+          value={card.code}
+          format={format}
+          width={2}
+          height={80}
+          displayValue={false}
+          background="#ffffff"
+          lineColor="#000000"
+        />
+      </CodeErrorBoundary>
+    </div>
   );
 }
 
@@ -966,13 +965,6 @@ useEffect(() => {
 
   const categoryStats = useMemo(() => {
     const data = new Map<string, { id: string; name: string; amount: number; color: string }>();
-    const colors = [
-      "var(--button-color)",
-      "color-mix(in srgb, var(--button-color) 80%, white)",
-      "color-mix(in srgb, var(--button-color) 60%, white)",
-      "color-mix(in srgb, var(--button-color) 40%, white)",
-      "color-mix(in srgb, var(--button-color) 20%, white)",
-    ];
 
     filteredExpenses.forEach((expense) => {
       const key = expense.category?.id ?? "other";
@@ -980,7 +972,7 @@ useEffect(() => {
         id: key,
         name: expense.category?.name ?? "Другое",
         amount: 0,
-        color: expense.category?.color ?? colors[data.size % colors.length],
+        color: expense.category?.color ?? CATEGORY_FALLBACK_COLORS[data.size % CATEGORY_FALLBACK_COLORS.length],
       };
       current.amount += expense.amount;
       data.set(key, current);
@@ -988,6 +980,12 @@ useEffect(() => {
 
     return [...data.values()].sort((a, b) => b.amount - a.amount);
   }, [filteredExpenses]);
+
+  // Цвет плашки категории в сетке под графиком = цвет её сектора на диаграмме
+  const categoryColorById = useMemo(
+    () => new Map(categoryStats.map((item) => [item.id, item.color])),
+    [categoryStats]
+  );
 
   const chartBackground = useMemo(() => {
     const total = categoryStats.reduce((sum, item) => sum + item.amount, 0);
@@ -1686,7 +1684,7 @@ useEffect(() => {
 
       {activeTab === "chart" && (
         <div className="chart-tab">
-          {/* ===== Sticky-блок: диаграмма и легенда не уходят при скролле ===== */}
+          {/* ===== Sticky-блок: диаграмма не уходит при скролле ===== */}
           <section className="chart-card chart-card--sticky">
             <div className="donut" style={{ background: chartBackground }}>
               <div>
@@ -1694,23 +1692,19 @@ useEffect(() => {
                 <b>{formatMoney(filteredTotalSpent)}</b>
               </div>
             </div>
-            <div className="legend">
-              {categoryStats.map((item) => (
-                <div key={item.name}>
-                  <i style={{ background: item.color }} />
-                  <span>{item.name}</span>
-                  <b>{formatMoney(item.amount)}</b>
-                </div>
-              ))}
-              {categoryStats.length === 0 && <p className="empty">Data will appear after adding expenses.</p>}
-            </div>
+            {/* Легенды нет — суммы и цвета категорий показывает сетка ниже */}
+            {categoryStats.length === 0 && <p className="empty">Data will appear after adding expenses.</p>}
           </section>
 
           {/* ===== Скроллируемая часть: сетка категорий под графиком ===== */}
           <section className="chart-categories">
-            <div className="section-title"><h2>Категории</h2></div>
             <div className="category-icon-grid">
-              {sortedCategories.map((category) => (
+              {sortedCategories.map((category, index) => {
+                const categoryColor =
+                  categoryColorById.get(category.id) ??
+                  category.color ??
+                  CATEGORY_FALLBACK_COLORS[index % CATEGORY_FALLBACK_COLORS.length];
+                return (
                 <button
                   className="category-icon-button"
                   key={category.id}
@@ -1727,7 +1721,7 @@ useEffect(() => {
                     // редактирование открывается только по long press
                   }}
                 >
-                  <span className="system-icon-bg"><Icon name={category.icon || "other"} /></span>
+                  <span className="system-icon-bg" style={{ background: categoryColor }}><Icon name={category.icon || "other"} /></span>
                   <b>{category.name}</b>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
                     <small>{formatMoney(categoryStats.find((item) => item.id === category.id)?.amount ?? 0)}</small>
@@ -1736,7 +1730,8 @@ useEffect(() => {
                     )}
                   </div>
                 </button>
-              ))}
+                );
+              })}
               {/* Кнопка «Добавить категорию» — последний элемент сетки */}
               <button
                 className="category-icon-button add-category-button"
