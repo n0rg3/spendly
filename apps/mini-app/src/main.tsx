@@ -1473,12 +1473,10 @@ useEffect(() => {
                   onClick={() => {
                     if (didLongPress.current) {
                       didLongPress.current = false;
-                      setEditingCategory(category);
                       return;
                     }
-                    // Функционал добавления траты отдан центральной кнопке «+» —
-                    // тап по категории просто редактирует её
-                    setEditingCategory(category);
+                    // Тап по категории ничего не делает —
+                    // редактирование открывается только по long press
                   }}
                 >
                   <span className="system-icon-bg"><Icon name={category.icon || "other"} /></span>
@@ -1726,11 +1724,11 @@ useEffect(() => {
         <svg className="tab-bar-shape" viewBox="0 0 390 64" preserveAspectRatio="none" aria-hidden="true">
           <path
             d="M 32 0
-               H 143
-               C 154 0 158 5 163 12
-               C 171 25 181 38 195 38
-               C 209 38 219 25 227 12
-               C 232 5 236 0 247 0
+               H 127
+               C 141 0 147 5 154 18
+               C 161 31 178 48 195 48
+               C 212 48 229 31 236 18
+               C 243 5 249 0 263 0
                H 358
                A 32 32 0 0 1 390 32
                A 32 32 0 0 1 358 64

@@ -832,7 +832,7 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   border-radius: 50%;
   color: #ffffff;
   background: #0A84FF;
-  /* Кружок ложится внутрь SVG-выемки (глубина 38), выступая вверх над баром */
+  /* Кружок ложится внутрь SVG-выемки (глубина 48), выступая вверх над баром */
   transform: translateY(-26px);
   box-shadow: 0 6px 16px rgba(10, 132, 255, 0.45);
 }
@@ -859,9 +859,12 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   height: 20px;
 }
 
-/* FAB не участвует в распределении ширины — иначе круг сплющивается */
+/* FAB не участвует в распределении ширины — иначе круг сплющивается.
+   Фон дублируем здесь: специфичность (0-2-0) перебивает
+   background: transparent у .floating-tab-bar button — иначе круг «+» теряет синий цвет */
 .floating-tab-bar .fab-button {
   flex: 0 0 auto;
+  background: #0A84FF;
 }
 
 .floating-tab-bar button {
