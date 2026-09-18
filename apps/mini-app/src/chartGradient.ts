@@ -1,24 +1,27 @@
 // apps/mini-app/src/chartGradient.ts
 // Построение конического градиента круговой диаграммы с учётом выбранной
-// категории: выбранная часть показывается крупнее, остальные — приглушаются.
+// категории: выбранная часть подсвечивается, остальные — приглушаются,
+// но НЕ меняют своих пропорций (сектор не увеличивается в размерах).
 
 export type CategoryStat = {
   id: string;
   name: string;
   amount: number;
-  /** Цвет категории (hsl из getCategoryColor): фон плашки и сектор диаграммы */
-  color: string;
+  /** Палитра категории (bg/border/chart из getCategoryColor) */
+  color: import("./categoryColors").CategoryColor;
 };
-
-// Насколько доля выбранной категории «приближается» к полному кругу:
-// показанная доля = raw + BOOST * (1 - raw), но не больше MAX —
-// иначе остальные категории исчезли бы и сектор перестал быть «частью» целого
-export const SELECTED_SHARE_BOOST = 0.55;
-export const SELECTED_SHARE_MAX = 0.85;
 
 // Нейтральное кольцо, когда трат за месяц нет
 const EMPTY_RING = "conic-gradient(#e9ebf3 0 100%)";
 
+/**
+ * Строит conic-gradient для круговой диаграммы.
+ *
+ * Важно: выбранная категория НЕ увеличивается в размерах — её сектор
+ * всегда отражает реальный процент от общей суммы трат. Подсветка
+ * достигается за счёт приглушения остальных секторов (color-mix с
+ * фоном), а не за счёт изменения пропорций.
+ */
 export function buildChartGradient(
   stats: CategoryStat[],
   selectedId?: string,
@@ -31,37 +34,20 @@ export function buildChartGradient(
     ? stats.findIndex((item) => item.id === selectedId)
     : -1;
   // Выбранной категории может не быть среди секторов (нет трат в этом месяце) —
-  // тогда увеличивать нечего: рисуем обычную диаграмму без приглушения
+  // тогда подсвечивать нечего: рисуем обычную диаграмму без приглушения
   const hasSelectedSegment = selectedIndex >= 0;
-  const rawShares = stats.map((item) => item.amount / total);
-  const rawSelected = hasSelectedSegment ? rawShares[selectedIndex] : 0;
 
-  // Увеличиваем долю, только если категорий несколько и выбранная — не весь
-  // круг: иначе в кольце осталась бы «дырка» до 100%
-  const canBoost = hasSelectedSegment && stats.length > 1 && rawSelected < 1;
-  const shownSelected = canBoost
-    ? Math.min(
-        SELECTED_SHARE_MAX,
-        rawSelected + SELECTED_SHARE_BOOST * (1 - rawSelected),
-      )
-    : rawSelected;
-  const restRaw = 1 - rawSelected;
-  const restShown = 1 - shownSelected;
-
+  // Все секторы рисуются в реальных пропорциях от общей суммы.
+  // Выбранная категория не меняет свой угол — подсвечивается лишь визуально.
   let position = 0;
   const segments = stats.map((item, index) => {
-    const share =
-      index === selectedIndex
-        ? shownSelected
-        : canBoost && restRaw > 0
-          ? (rawShares[index] / restRaw) * restShown
-          : rawShares[index];
-    const end = position + share * 100;
-    // Остальные секторы приглушаются — выбранная часть читается как увеличенная
+    const share = (item.amount / total) * 100;
+    const end = position + share;
+    // Остальные секторы приглушаются — выбранная часть читается как ярче
     const dimmed = hasSelectedSegment && index !== selectedIndex;
     const color = dimmed
-      ? `color-mix(in srgb, ${item.color} 45%, var(--secondary-bg-color))`
-      : item.color;
+      ? `color-mix(in srgb, ${item.color.chart} 45%, var(--secondary-bg-color))`
+      : item.color.chart;
     const segment = `${color} ${position}% ${end}%`;
     position = end;
     return segment;

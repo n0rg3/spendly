@@ -242,6 +242,22 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   transition: transform .15s ease;
 }
 
+/* Обёртка иконки категории (замена system-icon-bg):
+   полупрозрачный фон + лёгкая рамка для плашек с новым дизайном */
+.category-icon-wrapper {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 20px;
+  font-weight: 800;
+  color: #ffffff;
+  transition: transform .15s ease;
+}
+
 /* Цвет текста задаём явно: глобальное правило small { color: var(--hint-color) }
    дало бы серый текст на цветном фоне */
 .category-icon-button b { width: 100%; overflow: hidden; font-size: 11px; font-weight: 650; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
@@ -1262,7 +1278,7 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
 }
 
 /* Белая плашка штрихкода: эквивалент
-   w-full bg-white p-6 rounded-2xl flex items-center justify-center min-h-[100px] overflow-hidden.
+   w-full bg-white p-6 rounded-2xl flex items-center justify-center min-h-[110px] overflow-hidden.
    Сплошное белое поле по краям критично для сканеров на кассе */
 .loyalty-code-box {
   display: flex;
@@ -1274,18 +1290,19 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   padding: 24px;        /* p-6 */
   background: #ffffff;  /* bg-white */
   border-radius: 16px;  /* rounded-2xl */
-  min-height: 100px;    /* min-h-[100px] */
+  min-height: 110px;    /* min-h-[110px] */
 }
 
-/* Штрихкод SVG: адаптивно занимает ширину контейнера, но не больше 280px.
-   Height auto сохраняет пропорции из viewBox (width 1.5 / height 50 = тонкие
-   штрихи, «широкий низкий» код, как на референсе) */
+/* Штрихкод SVG: адаптивно занимает 85% ширины контейнера, но не больше 260px.
+   Height auto сохраняет пропорции из viewBox (width 2 / height 60 = тонкие
+   штрихи, аккуратный код, как на референсе) */
 .loyalty-code-box svg,
 .loyalty-code-box canvas {
   display: block;
-  width: 100%;       /* w-full */
-  max-width: 280px;  /* max-w-[280px] */
-  height: auto;      /* h-auto */
+  width: 85%;           /* w-[85%] */
+  max-width: 260px;     /* max-w-[260px] */
+  height: auto;         /* h-auto */
+  object-fit: contain;  /* object-contain */
 }
 
 /* Глобальное правило `svg { fill: none; stroke: currentColor; stroke-width: 1.9 }`
@@ -1310,12 +1327,12 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   border-radius: 16px; /* rounded-2xl */
 }
 
-/* QR SVG: фиксированный размер 200px (size={200}), центрируется flex-ом.
+/* QR SVG: фиксированный размер 220px (size={220}), центрируется flex-ом.
    Переопределяет глобальное `svg { width: 22px; height: 22px }` */
 .loyalty-code-qr svg {
   display: block;
-  width: 200px;
-  height: 200px;
+  width: 220px;
+  height: 220px;
 }
 
 /* Плашка без кода (вместо пустого белого прямоугольника) */

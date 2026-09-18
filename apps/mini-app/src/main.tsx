@@ -435,15 +435,16 @@ function CardCodeView({ card }: { card: LoyaltyCard }) {
       <QRCodeSVG
         value={card.code}
         // size задаёт внутреннюю систему координат (квадратный viewBox)
-        // и фиксированный размер 200px — QR не растягивается во всю ширину,
-        // а остаётся квадратным (~70% ширины белой плашки)
-        size={200}
-        // Белое поле (quiet zone) вокруг кода: includeMargin={true} = 4 модуля
-        // по спецификации QR
-        includeMargin={true}
+        // и фиксированный размер 220px — QR не растягивается во всю ширину,
+        // а остаётся квадратным в центре белой плашки
+        size={220}
+        // Минимальная коррекция ошибок (Low) — крупная редкая матрица,
+        // точно повторяет вид из официального приложения
+        level="L"
+        // Без лишних отступов (quiet zone) — код аккуратный и компактный
+        includeMargin={false}
         bgColor="#ffffff"
         fgColor="#000000"
-        level="M"
       />
     </div>
   );
@@ -468,14 +469,14 @@ function CardCodeView({ card }: { card: LoyaltyCard }) {
     <div className="loyalty-code-box">
       {/* key сбрасывает состояние boundary при смене карты/кода */}
       <CodeErrorBoundary key={`${card.id}-${card.code}`} fallback={qrFallback}>
-        {/* Пропорции как на референсе: тонкие штрихи (width 1.5), высота меньше
-            ширины (height 50), margin 10 — белое поле вокруг кода под сканер */}
+        {/* Пропорции как на референсе: тонкие штрихи (width 2), высота 60,
+            margin 0 — компактный код без лишних отступов */}
         <Barcode
           value={card.code}
           format={format}
-          width={1.5}
-          height={50}
-          margin={10}
+          width={2}
+          height={60}
+          margin={0}
           displayValue={false}
           background="#ffffff"
           lineColor="#000000"
@@ -511,6 +512,7 @@ function App() {
   const [editingExpense, setEditingExpense] = useState<Expense>();
   const [editingGoal, setEditingGoal] = useState<SavingsGoal>();
   const [goalTopUpGoal, setGoalTopUpGoal] = useState<SavingsGoal>();
+  const [goalOperationType, setGoalOperationType] = useState<"add" | "withdraw" | null>(null);
   const [goalIconValue, setGoalIconValue] = useState("goal");
   const [expenseCategory, setExpenseCategory] = useState<Category>();
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
@@ -938,8 +940,8 @@ useEffect(() => {
     }
   };
 
-  const adjustGoalAmount = async (formElement: HTMLFormElement, mode: "topup" | "withdraw") => {
-    if (!goalTopUpGoal || !dashboard) return;
+  const adjustGoalAmount = async (formElement: HTMLFormElement, mode: "add" | "withdraw") => {
+    if (!goalTopUpGoal || !goalOperationType || !dashboard) return;
 
     const form = new FormData(formElement);
     const amountStr = String(form.get("topUpAmount") ?? "").trim();
@@ -951,13 +953,14 @@ useEffect(() => {
     try {
       const updatedGoals = (dashboard.savingsGoals ?? []).map((g) =>
         g.id === goalTopUpGoal.id
-          ? { ...g, savedAmount: mode === "topup" ? g.savedAmount + amount : Math.max(0, g.savedAmount - amount) }
+          ? { ...g, savedAmount: mode === "add" ? g.savedAmount + amount : Math.max(0, g.savedAmount - amount) }
           : g
       );
 
       await saveToFirebase({ ...dashboard, savingsGoals: updatedGoals });
       formElement.reset();
       setGoalTopUpGoal(undefined);
+      setGoalOperationType(null);
     } catch {
       setError("Не удалось обновить цель");
     } finally {
@@ -1009,7 +1012,7 @@ useEffect(() => {
   };
 
   const categoryStats = useMemo<CategoryStat[]>(() => {
-    const data = new Map<string, { id: string; name: string; amount: number; color: string }>();
+    const data = new Map<string, { id: string; name: string; amount: number; color: import("./categoryColors").CategoryColor }>();
 
     filteredExpenses.forEach((expense) => {
       const key = expense.category?.id ?? "other";
@@ -1018,7 +1021,7 @@ useEffect(() => {
         id: key,
         name,
         amount: 0,
-        // Цвет детерминированно выводится из названия: одинаковые категории
+        // Палитра детерминированно выводится из названия: одинаковые категории
         // в диаграмме и в сетке всегда получают один и тот же hue
         color: getCategoryColor(name),
       };
@@ -1048,11 +1051,12 @@ useEffect(() => {
     const name = stat?.name ?? dashboard?.categories.find((item) => item.id === selectedCategoryId)?.name;
     // Категория удалена или id устарел — считаем, что выбор снят
     if (!name) return undefined;
+    const color = stat?.color ?? getCategoryColor(name);
     return {
       id: selectedCategoryId,
       name,
       amount: stat?.amount ?? 0,
-      color: stat?.color ?? getCategoryColor(name),
+      color,
     };
   }, [categoryStats, dashboard, selectedCategoryId]);
 
@@ -1656,7 +1660,7 @@ useEffect(() => {
               const categoryColor =
                 categoryColorById.get(catId) ?? getCategoryColor(category?.name ?? "Без категории");
               return (
-                <div className="accordion-item accordion-item--category" key={catId} style={{ background: categoryColor }}>
+                <div className="accordion-item accordion-item--category" key={catId} style={{ background: categoryColor.bg }}>
                   <button className={`accordion-trigger ${expandedAccId.has(catId) ? "active" : ""}`} onClick={() => toggleAccordion(catId)}>
                     <div className="accordion-left">
                       <span className="mini-icon">{category?.icon ? <Icon name={category.icon} /> : "•"}</span>
@@ -1774,17 +1778,17 @@ useEffect(() => {
               className={`donut${selectedCategoryMeta ? " donut--selected" : ""}`}
               style={{
                 background: chartBackground,
-                // Подсветка кольца цветом выбранной категории
+                // Подсветка кольца цветом выбранной категории (chart — плотный цвет сектора)
                 boxShadow: selectedCategoryMeta
-                  ? `0 0 0 6px color-mix(in srgb, ${selectedCategoryMeta.color} 22%, transparent)`
+                  ? `0 0 0 6px color-mix(in srgb, ${selectedCategoryMeta.color.chart} 22%, transparent)`
                   : undefined,
               }}
             >
               <div>
                 <small
-                  style={
-                    selectedCategoryMeta ? { color: selectedCategoryMeta.color } : undefined
-                  }
+                  style={{
+                    color: selectedCategoryMeta ? selectedCategoryMeta.color.chart : undefined,
+                  }}
                 >
                   {donutLabel}
                 </small>
@@ -1813,13 +1817,12 @@ useEffect(() => {
                   className={`category-icon-button${isSelected ? " selected" : ""}`}
                   key={category.id}
                   aria-pressed={isSelected}
-                  // Плашка категории: фон = её цвет, содержимое (иконка, название,
-                  // сумма) всегда белое — единый стиль и синхронизация с диаграммой
                   style={{
-                    background: categoryColor,
+                    background: categoryColor.bg,
+                    border: `1px solid ${categoryColor.border}`,
                     // Кольцо-разрыв в цвете категории: видно и вне плашки
                     boxShadow: isSelected
-                      ? `0 0 0 2.5px var(--bg-color), 0 0 0 5px ${categoryColor}`
+                      ? `0 0 0 2.5px var(--bg-color), 0 0 0 5px ${categoryColor.chart}`
                       : undefined,
                   }}
                   onPointerDown={() => startCategoryPress(category)}
@@ -1836,7 +1839,7 @@ useEffect(() => {
                     toggleCategorySelection(category.id);
                   }}
                 >
-                  <span className="system-icon-bg">
+                  <span className="category-icon-wrapper">
                     <Icon name={category.icon || "other"} />
                   </span>
                   <b>{category.name}</b>
@@ -1944,16 +1947,17 @@ useEffect(() => {
                 <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Создаю…" : "Создать цель"}</button>
               </form>
             </div>
-          ) : goalTopUpGoal ? (
+          ) : goalTopUpGoal && goalOperationType ? (
             <div 
               className="modal-backdrop" 
               onMouseDown={(e) => {
                 if (e.target === e.currentTarget) {
                   setGoalTopUpGoal(undefined);
+                  setGoalOperationType(null);
                 }
               }}
             >
-              <form className="expense-modal expense-modal--plain" onSubmit={(e) => { e.preventDefault(); void adjustGoalAmount(e.currentTarget, "topup"); }} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+              <form className="expense-modal expense-modal--plain" onSubmit={(e) => { e.preventDefault(); void adjustGoalAmount(e.currentTarget, goalOperationType); }} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
                 <div className="goal-topup-title">
                   <span className="goal-topup-icon"><Icon name={goalTopUpGoal.icon || "goal"} /></span>
                   <div>
@@ -1963,8 +1967,7 @@ useEffect(() => {
                 </div>
                 <input name="topUpAmount" type="text" inputMode="numeric" placeholder="Сумма" required autoFocus onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
                 <div className="button-row">
-                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Пополнить"}</button>
-                  <button type="button" className="danger-button" disabled={isSubmitting} onClick={(e) => { const form = e.currentTarget.closest("form"); if (form) void adjustGoalAmount(form, "withdraw"); }}>Снять</button>
+                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
                 </div>
               </form>
             </div>
@@ -1990,13 +1993,6 @@ useEffect(() => {
                       onPointerUp={endGoalPress}
                       onPointerCancel={endGoalPress}
                       onContextMenu={(e) => e.preventDefault()}
-                      onClick={() => {
-                        if (goalDidLongPress.current) {
-                          goalDidLongPress.current = false;
-                          return;
-                        }
-                        setGoalTopUpGoal(goal);
-                      }}
                     >
                       <span className="goal-card-icon"><Icon name={goal.icon || "goal"} /></span>
                       <div className="goal-card-info">
@@ -2014,8 +2010,8 @@ useEffect(() => {
                       </div>
                     </button>
                     <div className="goal-card-actions">
-                      <button type="button" onClick={() => setGoalTopUpGoal(goal)}>Пополнить</button>
-                      <button type="button" className="goal-card-withdraw" onClick={() => setGoalTopUpGoal(goal)}>Снять</button>
+                      <button type="button" onClick={() => { setGoalTopUpGoal(goal); setGoalOperationType("add"); }}>Пополнить</button>
+                      <button type="button" className="goal-card-withdraw" onClick={() => { setGoalTopUpGoal(goal); setGoalOperationType("withdraw"); }}>Снять</button>
                     </div>
                   </div>
                 );
