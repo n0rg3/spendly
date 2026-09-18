@@ -1344,22 +1344,22 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   width: 100%;
   min-width: 0;
   overflow: hidden;
-  padding: 24px;        /* p-6 */
+  padding: 24px 16px;    /* py-6 px-4 */
   background: #ffffff;  /* bg-white */
   border-radius: 16px;  /* rounded-2xl */
   min-height: 110px;    /* min-h-[110px] */
 }
 
-/* Штрихкод SVG: адаптивно занимает 85% ширины контейнера, но не больше 260px.
-   Height auto сохраняет пропорции из viewBox (width 2 / height 60 = тонкие
-   штрихи, аккуратный код, как на референсе) */
+/* Штрихкод SVG: адаптивно занимает 90% ширины контейнера, но не больше 300px.
+   Height auto сохраняет пропорции из viewBox (width 2.2 / height 55 = аккуратный
+   код с плотными штрихами, как на референсе Maxi) */
 .loyalty-code-box svg,
 .loyalty-code-box canvas {
   display: block;
-  width: 85%;           /* w-[85%] */
-  max-width: 260px;     /* max-w-[260px] */
-  height: auto;         /* h-auto */
-  object-fit: contain;  /* object-contain */
+  width: 90%;            /* w-[90%] */
+  max-width: 300px;      /* max-w-[300px] */
+  height: auto;          /* h-auto */
+  object-fit: contain;   /* object-contain */
 }
 
 /* Глобальное правило `svg { fill: none; stroke: currentColor; stroke-width: 1.9 }`
@@ -1384,12 +1384,12 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   border-radius: 16px; /* rounded-2xl */
 }
 
-/* QR SVG: фиксированный размер 220px (size={220}), центрируется flex-ом.
+/* QR SVG: фиксированный размер 240px (size={240}), центрируется flex-ом.
    Переопределяет глобальное `svg { width: 22px; height: 22px }` */
 .loyalty-code-qr svg {
   display: block;
-  width: 220px;
-  height: 220px;
+  width: 240px;
+  height: 240px;
 }
 
 /* Плашка без кода (вместо пустого белого прямоугольника) */

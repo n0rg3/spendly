@@ -75,10 +75,9 @@ type LoyaltyCard = {
 type BarcodeFormat = NonNullable<BarcodeProps["format"]>;
 
 const barcodeFormatFor = (code: string): BarcodeFormat => {
-  const isDigitsOnly = /^\d+$/.test(code);
-
-  if (isDigitsOnly && code.length === 13) return "EAN13";
-  if (isDigitsOnly && code.length === 8) return "EAN8";
+  // Всегда CODE128 — универсальный формат, который кодирует любую длину и любой печатный ASCII.
+  // CODE128 рендерит штрихи строго одной высоты без лишних горизонтальных линий (как на референсе Maxi),
+  // в отличие от EAN-13, где крайние и центральные маркеры вылезают вниз из-за двумерной структуры штрих-кода.
   return "CODE128";
 };
 
@@ -435,14 +434,16 @@ function CardCodeView({ card }: { card: LoyaltyCard }) {
       <QRCodeSVG
         value={card.code}
         // size задаёт внутреннюю систему координат (квадратный viewBox)
-        // и фиксированный размер 220px — QR не растягивается во всю ширину,
+        // и фиксированный размер 240px — QR не растягивается во всю ширину,
         // а остаётся квадратным в центре белой плашки
-        size={220}
-        // Минимальная коррекция ошибок (Low) — крупная редкая матрица,
-        // точно повторяет вид из официального приложения
-        level="L"
-        // Без лишних отступов (quiet zone) — код аккуратный и компактный
-        includeMargin={false}
+        size={240}
+        // Высокий уровень коррекции ошибок (High) — искусственно увеличивает
+        // плотность точек матрицы, делая её мелкой и детализированной,
+        // точно как в официальном приложении Idea / Super Kartica
+        level="H"
+        // Белые отступы (quiet zone) по краям — обязательно для сканеров на кассе,
+        // которые могут не прочитать код без полей
+        includeMargin={true}
         bgColor="#ffffff"
         fgColor="#000000"
       />
@@ -469,13 +470,13 @@ function CardCodeView({ card }: { card: LoyaltyCard }) {
     <div className="loyalty-code-box">
       {/* key сбрасывает состояние boundary при смене карты/кода */}
       <CodeErrorBoundary key={`${card.id}-${card.code}`} fallback={qrFallback}>
-        {/* Пропорции как на референсе: тонкие штрихи (width 2), высота 60,
-            margin 0 — компактный код без лишних отступов */}
+        {/* Пропорции как на референсе Maxi: плотные штрихи (width 2.2), компактная высота (55),
+            margin 0 — компактный код без лишних отступов, строго одна высота штрихов */}
         <Barcode
           value={card.code}
           format={format}
-          width={2}
-          height={60}
+          width={2.2}
+          height={55}
           margin={0}
           displayValue={false}
           background="#ffffff"
