@@ -434,13 +434,12 @@ function CardCodeView({ card }: { card: LoyaltyCard }) {
       <QRCodeSVG
         value={card.code}
         // size задаёт внутреннюю систему координат (квадратный viewBox)
-        // и фиксированный размер 240px — QR не растягивается во всю ширину,
+        // и фиксированный размер 230px — QR не растягивается во всю ширину,
         // а остаётся квадратным в центре белой плашки
-        size={240}
-        // Высокий уровень коррекции ошибок (High) — искусственно увеличивает
-        // плотность точек матрицы, делая её мелкой и детализированной,
-        // точно как в официальном приложении Idea / Super Kartica
-        level="H"
+        size={230}
+        // Стандартный уровень коррекции ошибок (Medium) — подойдёт для длинных строк,
+        // обеспечивая хорошую плотность матрицы, как в официальном приложении Idea / Super Kartica
+        level="M"
         // Белые отступы (quiet zone) по краям — обязательно для сканеров на кассе,
         // которые могут не прочитать код без полей
         includeMargin={true}
@@ -1269,25 +1268,13 @@ useEffect(() => {
 
   // Черновики позиций чека: название, сумма и категория, отредактированные вручную
   const [receiptDrafts, setReceiptDrafts] = useState<Record<number, { name?: string; amount: number; categoryId: string }>>({});
-  // Какие позиции чека включать в трату (по умолчанию — все)
-  const [receiptExcluded, setReceiptExcluded] = useState<Set<number>>(new Set());
 
   const setReceiptDraft = (index: number, patch: Partial<{ name: string; amount: number; categoryId: string }>) => {
     setReceiptDrafts((prev) => ({ ...prev, [index]: { ...(prev[index] ?? { amount: 0, categoryId: "" }), ...patch } }));
   };
 
-  const toggleReceiptItem = (index: number) => {
-    setReceiptExcluded((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
-  };
-
   const closeReceipt = () => {
     setParsedReceipt(undefined);
-    setReceiptExcluded(new Set());
     setReceiptDrafts({});
     setReceiptError(undefined);
   };
@@ -1301,13 +1288,11 @@ useEffect(() => {
     return dashboard?.categories.find((c) => c.name === aiName)?.id ?? "";
   };
 
-  // «Сохранить все траты»: создаёт отдельную трату на каждую выбранную позицию
+  // «Сохранить все траты»: создаёт отдельную трату на каждую позицию чека
   const confirmReceipt = async () => {
     if (!parsedReceipt || !dashboard) return;
 
-    const includedIndexes = parsedReceipt.items
-      .map((_, index) => index)
-      .filter((index) => !receiptExcluded.has(index));
+    const includedIndexes = parsedReceipt.items.map((_, index) => index);
     if (includedIndexes.length === 0) return;
 
     const createdAt = receiptDateToIso(parsedReceipt.dateTime) || new Date().toISOString();
@@ -2221,17 +2206,8 @@ useEffect(() => {
 
             <div className="receipt-items">
               {parsedReceipt.items.map((item, index) => {
-                const included = !receiptExcluded.has(index);
                 return (
-                  <div key={`${item.name}-${index}`} className={`receipt-item${included ? "" : " receipt-item--off"}`}>
-                    <label className="receipt-item-checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={included}
-                        onChange={() => toggleReceiptItem(index)}
-                        aria-label={`Включить позицию ${item.name}`}
-                      />
-                    </label>
+                  <div key={`${item.name}-${index}`} className="receipt-item">
                     <div className="receipt-item-info">
                       {/* Название товара — редактируемое поле */}
                       <input
@@ -2286,12 +2262,12 @@ useEffect(() => {
 
             <div className="receipt-total">
               <span>Итого</span>
-              <b>{formatMoney(parsedReceipt.items.reduce((sum, _, index) => receiptExcluded.has(index) ? sum : sum + (receiptItemAmount(index) || 0), 0))}</b>
+              <b>{formatMoney(parsedReceipt.items.reduce((sum, _, index) => sum + (receiptItemAmount(index) || 0), 0))}</b>
             </div>
 
             <div className="button-row">
-              <button type="submit" disabled={isSubmitting || parsedReceipt.items.length === receiptExcluded.size}>
-                {isSubmitting ? "Сохраняю…" : "Сохранить все траты"}
+              <button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Сохраняю…" : "Сохранить"}
               </button>
               <button type="button" className="danger-button" onClick={closeReceipt}>Отмена</button>
             </div>

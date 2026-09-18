@@ -1141,7 +1141,6 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   box-sizing: border-box;
 }
 
-.receipt-item--off { opacity: 0.45; }
 .receipt-item-info { display: grid; gap: 6px; flex: 1; min-width: 0; }
 
 /* Название товара — редактируемое поле на всю ширину */
@@ -1372,7 +1371,7 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
 }
 
 /* Белый квадратный контейнер QR-кода: эквивалент
-   p-4 bg-white rounded-2xl flex justify-center items-center.
+   bg-white p-4 rounded-2xl flex justify-center items-center shadow-sm.
    Без width: 100% — контейнер квадратный (content-based), QR не растягивается
    во всю ширину плашки, а остаётся аккуратным и сфокусированным по центру */
 .loyalty-code-qr {
@@ -1382,14 +1381,15 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   padding: 16px;      /* p-4 */
   background: #ffffff; /* bg-white */
   border-radius: 16px; /* rounded-2xl */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04); /* shadow-sm */
 }
 
-/* QR SVG: фиксированный размер 240px (size={240}), центрируется flex-ом.
+/* QR SVG: фиксированный размер 230px (size={230}), центрируется flex-ом.
    Переопределяет глобальное `svg { width: 22px; height: 22px }` */
 .loyalty-code-qr svg {
   display: block;
-  width: 240px;
-  height: 240px;
+  width: 230px;
+  height: 230px;
 }
 
 /* Плашка без кода (вместо пустого белого прямоугольника) */
