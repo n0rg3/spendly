@@ -224,9 +224,15 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   border-radius: 18px;
   /* fallback, если inline-стиль с цветом категории не передан */
   background: var(--button-color);
-  color: var(--button-text-color, #ffffff);
+  color: #000000;
   text-align: center;
   transition: transform .15s ease, box-shadow .15s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .category-icon-button {
+    color: #ffffff;
+  }
 }
 .category-icon-button > span {
   display: grid;
@@ -234,12 +240,18 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   height: 34px;
   place-items: center;
   border-radius: 10px;
-  /* Иконка не перекрашивается: белый глиф прямо на цветной плашке */
+  /* Иконка не перекрашивается: контрастный глиф на цветной плашке */
   background: transparent;
   font-size: 20px;
   font-weight: 800;
-  color: #ffffff;
+  color: #000000;
   transition: transform .15s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .category-icon-button > span {
+    color: #ffffff;
+  }
 }
 
 /* Обёртка иконки категории (замена system-icon-bg):
@@ -250,12 +262,20 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   height: 34px;
   place-items: center;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.15);
   font-size: 20px;
   font-weight: 800;
-  color: #ffffff;
+  color: #000000;
   transition: transform .15s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .category-icon-wrapper {
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    color: #ffffff;
+  }
 }
 
 /* Цвет текста задаём явно: глобальное правило small { color: var(--hint-color) }
@@ -644,15 +664,23 @@ input:focus, select:focus { border-color: var(--accent-color); }
 /* ===== Плашки категорий на экране «Траты» =====
    Фон = цвет категории (тот же, что у плашки на «Графике» и у сектора
    диаграммы — inline-стиль из getCategoryColor). Иконка, название и сумма
-   всегда белые; цветной остаётся только заголовок-триггер, список трат внутри
+   чёрные в светлой теме, белые — в тёмной; цветной остаётся только заголовок-триггер, список трат внутри
    остаётся на нейтральном фоне */
 .accordion-item--category { box-shadow: 0 4px 14px color-mix(in srgb, var(--text-color) 10%, transparent); }
-.accordion-item--category .accordion-trigger { color: #ffffff; }
-.accordion-item--category .accordion-trigger span { color: #ffffff; }
-.accordion-item--category .accordion-trigger:active { background: color-mix(in srgb, #ffffff 14%, transparent); }
-/* Иконка не перекрашивается — белый глиф на полупрозрачном белом квадрате */
-.accordion-item--category .mini-icon { color: #ffffff; background: color-mix(in srgb, #ffffff 24%, transparent); }
-.accordion-item--category .accordion-right b { color: #ffffff; }
+.accordion-item--category .accordion-trigger { color: #000000; }
+.accordion-item--category .accordion-trigger span { color: #000000; }
+.accordion-item--category .accordion-trigger:active { background: color-mix(in srgb, #000000 14%, transparent); }
+/* Иконка — контрастный глиф на полупрозрачном фоне */
+.accordion-item--category .mini-icon { color: #000000; background: color-mix(in srgb, #000000 12%, transparent); }
+.accordion-item--category .accordion-right b { color: #000000; }
+
+@media (prefers-color-scheme: dark) {
+  .accordion-item--category .accordion-trigger { color: #ffffff; }
+  .accordion-item--category .accordion-trigger span { color: #ffffff; }
+  .accordion-item--category .accordion-trigger:active { background: color-mix(in srgb, #ffffff 14%, transparent); }
+  .accordion-item--category .mini-icon { color: #ffffff; background: color-mix(in srgb, #ffffff 24%, transparent); }
+  .accordion-item--category .accordion-right b { color: #ffffff; }
+}
 .accordion-item--category .accordion-right svg { color: #ffffff; opacity: .85; }
 /* Внутри раскрытой плашки — обычные цвета, иначе белый текст был бы нечитаем */
 .accordion-item--category .accordion-content { color: var(--text-color); }
@@ -1085,13 +1113,41 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   transition: opacity 0.2s ease;
 }
 
-.receipt-item input[type="checkbox"] { margin-top: 3px; accent-color: var(--link-color); }
+.receipt-item input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #000000;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+@media (prefers-color-scheme: dark) {
+  .receipt-item input[type="checkbox"] {
+    accent-color: #ffffff;
+  }
+}
+
+.receipt-item-checkbox-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  box-sizing: border-box;
+}
+
 .receipt-item--off { opacity: 0.45; }
 .receipt-item-info { display: grid; gap: 6px; flex: 1; min-width: 0; }
 
 /* Название товара — редактируемое поле на всю ширину */
 .receipt-name-input {
   width: 100%;
+  box-sizing: border-box;
   padding: 7px 9px;
   border-radius: 9px;
   border: 1px solid var(--border-color);
@@ -1108,6 +1164,7 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
 .receipt-item-controls input,
 .receipt-item-controls select {
   min-width: 0;
+  box-sizing: border-box;
   padding: 7px 9px;
   border-radius: 9px;
   border: 1px solid var(--border-color);

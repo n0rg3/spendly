@@ -2223,12 +2223,14 @@ useEffect(() => {
                 const included = !receiptExcluded.has(index);
                 return (
                   <div key={`${item.name}-${index}`} className={`receipt-item${included ? "" : " receipt-item--off"}`}>
-                    <input
-                      type="checkbox"
-                      checked={included}
-                      onChange={() => toggleReceiptItem(index)}
-                      aria-label={`Включить позицию ${item.name}`}
-                    />
+                    <label className="receipt-item-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={included}
+                        onChange={() => toggleReceiptItem(index)}
+                        aria-label={`Включить позицию ${item.name}`}
+                      />
+                    </label>
                     <div className="receipt-item-info">
                       {/* Название товара — редактируемое поле */}
                       <input
