@@ -1,5 +1,5 @@
 // apps/mini-app/src/App.tsx
-import { Component, StrictMode, useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Component, StrictMode, Fragment, useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import * as LucideIcons from "lucide-react";
 import { collection, doc, setDoc, getDoc, deleteDoc, onSnapshot, query, orderBy } from "firebase/firestore";
@@ -19,6 +19,7 @@ import {
 } from "./i18n";
 import { buildChartGradient, type CategoryStat } from "./chartGradient";
 import { nextSelectedCategoryIdOnOutsideTap } from "./chartInteraction";
+import { cardDropIndex, cardDropLineY, type CardDragRect } from "./cardDrag";
 import "./styles.css";
 
 function lockAppHeight() {
@@ -75,6 +76,8 @@ type LoyaltyCard = {
   format: "qr" | "barcode";
   /** Цвет оформления карты (hex). Не задан — используется нейтральный графитовый */
   color?: string;
+  /** Позиция в ручной сортировке (drag & drop). Меньше — выше в списке */
+  order?: number;
   createdAt: string;
 };
 
@@ -99,9 +102,6 @@ const detectCardFormat = (code: string): "qr" | "barcode" => (/^\d{6,20}$/.test(
 // ===== Цвета карт лояльности =====
 // Нейтральный графитовый тон по умолчанию (для карт без сохранённого цвета)
 const DEFAULT_CARD_COLOR = "#2f3440";
-
-// Стильные пресеты палитры: графит, красный, синий, зелёный, фиолетовый, оранжевый, жёлтый
-const CARD_COLOR_PRESETS = ["#2f3440", "#e53935", "#3390ec", "#2cb074", "#8e5cf6", "#f7a200", "#f5c518"];
 
 // Мягкий градиент карты: от выбранного цвета к более тёмному тону (#121212),
 // как на реальных дисконтных картах; текст остаётся контрастным
@@ -527,6 +527,10 @@ function App() {
   const [loyaltyCards, setLoyaltyCards] = useState<LoyaltyCard[]>([]);
   const [showCardForm, setShowCardForm] = useState(false);
   const [expandedCard, setExpandedCard] = useState<LoyaltyCard>();
+  // Состояние drag & drop для карт лояльности
+  const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
+  const [cardDragRects, setCardDragRects] = useState<CardDragRect[]>([]);
+
   const categoryPressTimer = useRef<number | undefined>(undefined);
   const didLongPress = useRef(false);
   const goalPressTimer = useRef<number | undefined>(undefined);
@@ -632,13 +636,23 @@ useEffect(() => {
     return () => unsubscribe();
   }, []);
 
-  // Realtime-подписка на карты лояльности (подколлекция users/{userId}/loyalty_cards)
+    // Realtime-подписка на карты лояльности (подколлекция users/{userId}/loyalty_cards).
+  // Сортировка по полю order (ручная, drag & drop). Старые карты без order
+  // сортируются клиентом по createdAt.
   useEffect(() => {
-    const cardsQuery = query(collection(db, "users", getUserId(), "loyalty_cards"), orderBy("createdAt", "desc"));
+    const cardsQuery = query(collection(db, "users", getUserId(), "loyalty_cards"), orderBy("order", "asc"));
     return onSnapshot(
       cardsQuery,
       (snapshot) => {
-        setLoyaltyCards(snapshot.docs.map((cardDoc) => ({ id: cardDoc.id, ...(cardDoc.data() as Omit<LoyaltyCard, "id">) })));
+        const sorted = snapshot.docs
+          .map((cardDoc) => ({ id: cardDoc.id, ...(cardDoc.data() as Omit<LoyaltyCard, "id">) }))
+          .sort((a, b) => {
+            const oa = a.order ?? 0;
+            const ob = b.order ?? 0;
+            if (oa !== ob) return oa - ob;
+            return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+          });
+        setLoyaltyCards(sorted);
       },
       (err) => console.error("Firestore loyalty_cards error:", err),
     );
@@ -1544,13 +1558,15 @@ useEffect(() => {
     const format: "qr" | "barcode" = formatChoice === "auto" ? detectCardFormat(code) : (formatChoice as "qr" | "barcode");
 
     try {
+            const order = editingCard ? editingCard.order : (loyaltyCards.length > 0 ? Math.max(...loyaltyCards.map((c) => c.order ?? 0)) + 1 : 0);
       if (editingCard) {
-        const updatedCard: LoyaltyCard = { ...editingCard, name, code, format, color };
+        const updatedCard: LoyaltyCard = { ...editingCard, name, code, format, color, order };
         await setDoc(doc(db, "users", getUserId(), "loyalty_cards", editingCard.id), {
           name: updatedCard.name,
           code: updatedCard.code,
           format: updatedCard.format,
           color: updatedCard.color,
+          order: updatedCard.order,
           createdAt: updatedCard.createdAt,
         });
         // Если карта была открыта на весь экран — обновляем её данные на месте
@@ -1562,6 +1578,7 @@ useEffect(() => {
           code,
           format,
           color,
+          order,
           createdAt: new Date().toISOString(),
         });
       }
@@ -1610,7 +1627,7 @@ useEffect(() => {
     if (cardPressTimer.current) window.clearTimeout(cardPressTimer.current);
   };
 
-  const removeLoyaltyCard = async (card: LoyaltyCard) => {
+    const removeLoyaltyCard = async (card: LoyaltyCard) => {
     if (!window.confirm(t("confirmDeleteCard", { name: card.name }))) return;
     try {
       await deleteDoc(doc(db, "users", getUserId(), "loyalty_cards", card.id));
@@ -1620,12 +1637,84 @@ useEffect(() => {
     }
   };
 
-  const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal || isReceiptLoading || parsedReceipt || showCardForm || expandedCard;
+  // Пересохранение порядка карт в Firestore
+  const saveCardOrder = async (cards: LoyaltyCard[]) => {
+    const userId = getUserId();
+    try {
+      for (let i = 0; i < cards.length; i++) {
+        const cardDoc = cards[i];
+        await setDoc(
+          doc(db, "users", userId, "loyalty_cards", cardDoc.id),
+          { order: i, name: cardDoc.name, code: cardDoc.code, format: cardDoc.format, color: cardDoc.color, createdAt: cardDoc.createdAt },
+          { merge: true },
+        );
+      }
+    } catch (err) {
+      console.error("Failed to save card order:", err);
+    }
+  };
 
-  // Выбран ли «свой» цвет карты (не совпадает ни с одним пресетом)
-  const isCustomCardColor = !CARD_COLOR_PRESETS.some(
-    (preset) => preset.toLowerCase() === cardColorDraft.toLowerCase(),
-  );
+       // Долгое нажатие на карту в списке открывает редактирование (как у категорий/целей).
+  // Drag начинается только после срабатывания таймера — иначе long-press редактирование
+  // конфликтует с перемещением.
+  const startCardDrag = (card: LoyaltyCard, e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    cardDidLongPress.current = false;
+    cardPressTimer.current = window.setTimeout(() => {
+      cardDidLongPress.current = true;
+      openCardEditor(card);
+    }, 650);
+  };
+
+  // Перетаскивание карты (только если long-press НЕ сработал)
+  const handleCardDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (cardDidLongPress.current) return;
+    if (!draggedCardId) {
+      // начало drag: только если ещё не держим карту и нет long-press
+      const btn = e.currentTarget;
+      if (cardDidLongPress.current) return;
+      const cardId = btn.getAttribute("data-card-id");
+      if (!cardId) return;
+      setDraggedCardId(cardId);
+      btn.setPointerCapture(e.pointerId);
+    }
+    const listRect = e.currentTarget.closest(".cards-list");
+    if (!listRect) return;
+    const rects = Array.from(listRect.querySelectorAll<HTMLButtonElement>(".loyalty-card")).map((btn) => {
+      const r = btn.getBoundingClientRect();
+      return { id: btn.getAttribute("data-card-id") ?? "", top: r.top + window.scrollY, bottom: r.bottom + window.scrollY };
+    });
+    setCardDragRects(rects);
+  };
+
+  // Окончание drag & drop карты
+  const endCardDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!draggedCardId) return;
+    const listEl = e.currentTarget.closest(".cards-list");
+    if (!listEl) return;
+
+        const pointerY = e.clientY + window.scrollY;
+    const newIndex = cardDropIndex(cardDragRects, draggedCardId, pointerY);
+
+
+    // Оптимистичная перестановка
+    setLoyaltyCards((current) => {
+      const oldIndex = current.findIndex((c) => c.id === draggedCardId);
+      if (oldIndex < 0) return current;
+      const newCards = [...current];
+      const [removed] = newCards.splice(oldIndex, 1);
+      newCards.splice(newIndex, 0, removed);
+      // Переназначаем order
+      const reordered = newCards.map((card, i) => ({ ...card, order: i }));
+      saveCardOrder(reordered);
+      return reordered;
+    });
+
+    setDraggedCardId(null);
+    setCardDragRects([]);
+  };
+
+  const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal || isReceiptLoading || parsedReceipt || showCardForm || expandedCard;
 
   // Кнопка переключения языка (RU ⇄ EN) — общий элемент шапки
   const langToggle = (
@@ -2155,34 +2244,59 @@ useEffect(() => {
               <button type="button" onClick={openNewCardForm}>{t("addCard")}</button>
             </section>
           ) : (
-            <div className="cards-list">
-              {loyaltyCards.map((card) => (
-                <button
-                  key={card.id}
-                  type="button"
-                  className="loyalty-card"
-                  style={{ background: cardGradient(card.color) }}
-                  onPointerDown={() => startCardPress(card)}
-                  onPointerUp={endCardPress}
-                  onPointerCancel={endCardPress}
-                  onContextMenu={(e) => e.preventDefault()}
-                  onClick={() => {
-                    if (cardDidLongPress.current) {
-                      cardDidLongPress.current = false;
-                      return;
-                    }
-                    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
-                    setExpandedCard(card);
+                        <div className="cards-list">
+              {loyaltyCards.map((card) => {
+                const isDragging = draggedCardId === card.id;
+                return (
+                  <Fragment key={card.id}>
+                    <button
+                      type="button"
+                      data-card-id={card.id}
+                      className={`loyalty-card${isDragging ? " loyalty-card--dragging" : ""}`}
+                      style={{
+                        background: cardGradient(card.color),
+                        ...(isDragging ? { opacity: 0.4, transform: "scale(0.96)", cursor: "grabbing" } : { cursor: "grab" }),
+                      }}
+                                            onPointerDown={(e) => startCardDrag(card, e)}
+                      onPointerMove={handleCardDrag}
+                      onPointerUp={(e) => { if (cardPressTimer.current) window.clearTimeout(cardPressTimer.current); endCardDrag(e); }}
+                      onPointerCancel={() => { if (cardPressTimer.current) window.clearTimeout(cardPressTimer.current); setDraggedCardId(null); }}
+                      onPointerLeave={() => { if (draggedCardId === card.id) { if (cardPressTimer.current) window.clearTimeout(cardPressTimer.current); setDraggedCardId(null); } }}
+                      onContextMenu={(e) => e.preventDefault()}
+                      onClick={() => {
+                        if (cardDidLongPress.current) {
+                          cardDidLongPress.current = false;
+                          return;
+                        }
+                        if (isDragging) return;
+                        window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
+                        setExpandedCard(card);
+                      }}
+                    >
+                      <span className="loyalty-card-icon"><Icon name="loyalty" /></span>
+                      <div className="loyalty-card-info">
+                        <strong>{card.name}</strong>
+                        <small>{shortCardCode(card.code)}</small>
+                      </div>
+                      <Icon name="arrow" />
+                    </button>
+                                        {draggedCardId === card.id && cardDragRects.length > 0 && (() => {
+                      const dropIndex = cardDropIndex(cardDragRects, card.id, window.scrollY + (cardDragRects.find((r) => r.id === card.id)?.bottom ?? 0));
+                      const lineY = cardDropLineY(cardDragRects, card.id, dropIndex);
+                      return <div className="card-drop-indicator" style={{ top: `${lineY - window.scrollY}px` }} />;
+                    })()}
+                  </Fragment>
+                );
+              })}
+              {draggedCardId && (
+                <div
+                  className="loyalty-card loyalty-card--ghost"
+                  style={{
+                    background: cardGradient(loyaltyCards.find((c) => c.id === draggedCardId)?.color),
+                    opacity: 0.5,
                   }}
-                >
-                  <span className="loyalty-card-icon"><Icon name="loyalty" /></span>
-                  <div className="loyalty-card-info">
-                    <strong>{card.name}</strong>
-                    <small>{shortCardCode(card.code)}</small>
-                  </div>
-                  <Icon name="arrow" />
-                </button>
-              ))}
+                />
+              )}
               <button
                 type="button"
                 className="add-card-button"
@@ -2455,36 +2569,20 @@ useEffect(() => {
               <option value="qr">{t("formatQr")}</option>
             </select>
 
-            {/* ===== Цвет карты: пресеты-свотчи + свой цвет ===== */}
+                        {/* ===== Цвет карты: только селектор ===== */}
             <div className="card-color-picker" onFocus={scrollFieldIntoView}>
               <span className="card-color-label">{t("colorLabel")}</span>
-              <div className="card-color-swatches">
-                {CARD_COLOR_PRESETS.map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    className={`card-color-swatch${cardColorDraft.toLowerCase() === preset.toLowerCase() ? " selected" : ""}`}
-                    style={{ background: preset }}
-                    onClick={() => setCardColorDraft(preset)}
-                    aria-label={preset}
-                  >
-                    {cardColorDraft.toLowerCase() === preset.toLowerCase() && "✓"}
-                  </button>
-                ))}
-                {/* Свой цвет: нативный инпут поверх кружка-свотча */}
-                <label
-                  className={`card-color-swatch card-color-custom${isCustomCardColor ? " selected" : ""}`}
-                  style={isCustomCardColor ? { background: cardColorDraft } : undefined}
-                  title={t("customColor")}
-                >
-                  <input
-                    type="color"
-                    value={cardColorDraft}
-                    onChange={(e) => setCardColorDraft(e.target.value)}
-                    aria-label={t("customColor")}
-                  />
-                  {isCustomCardColor && "✓"}
-                </label>
+              <div
+                className="card-color-swatch selected"
+                style={{ background: cardColorDraft }}
+                title={t("customColor")}
+              >
+                <input
+                  type="color"
+                  value={cardColorDraft}
+                  onChange={(e) => setCardColorDraft(e.target.value)}
+                  aria-label={t("customColor")}
+                />
               </div>
             </div>
 

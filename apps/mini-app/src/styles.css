@@ -1264,6 +1264,30 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
 
 .loyalty-card > svg:last-child { color: rgba(255, 255, 255, 0.75); flex: none; }
 
+/* Drag & drop индикаторы */
+.loyalty-card--dragging {
+  cursor: grabbing !important;
+  z-index: 10;
+  position: relative;
+}
+.loyalty-card--ghost {
+  opacity: 0.5 !important;
+  transform: scale(0.96) !important;
+  cursor: grab;
+}
+.card-drop-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  margin: 0 4px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 5;
+  transform: translateY(-50%);
+}
+
 .add-card-button {
   display: flex;
   align-items: center;
@@ -1279,7 +1303,7 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   font-weight: 650;
 }
 
-/* ===== Выбор цвета карты (пресеты-свотчи + свой цвет) ===== */
+/* ===== Выбор цвета карты (только селектор) ===== */
 .card-color-picker { display: grid; gap: 8px; }
 .card-color-label {
   font-size: 12px;
@@ -1287,20 +1311,14 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   letter-spacing: 0.04em;
   color: var(--hint-color);
 }
-.card-color-swatches {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-
-/* Кружок-свотч с галочкой на выбранном цвете */
+/* Кружок-свотч: фон — выбранный цвет, поверх него прозрачный input type=color */
 .card-color-swatch {
   position: relative;
   display: grid;
   place-items: center;
   width: 36px;
   height: 36px;
+  margin: 0;
   padding: 0;
   border-radius: 50%;
   border: 2px solid transparent;
@@ -1313,19 +1331,13 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   transition: transform 0.12s ease, border-color 0.12s ease;
 }
 
-.card-color-swatch:active { transform: scale(0.88); }
-
 .card-color-swatch.selected {
   border-color: var(--text-color);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, #ffffff 28%, transparent), 0 2px 8px color-mix(in srgb, #121212 30%, transparent);
 }
 
-/* Свой цвет: радужный кружок, поверх — прозрачный <input type="color"> */
-.card-color-custom {
-  background: conic-gradient(#ff5f57, #ffbd2e, #28c840, #3390ec, #8e5cf6, #ff5f57);
-}
-
-.card-color-custom input {
+/* Прозрачный input type=color поверх кружка */
+.card-color-swatch input {
   position: absolute;
   inset: 0;
   width: 100%;
