@@ -73,6 +73,8 @@ type LoyaltyCard = {
   name: string;
   code: string;
   format: "qr" | "barcode";
+  /** Цвет оформления карты (hex). Не задан — используется нейтральный графитовый */
+  color?: string;
   createdAt: string;
 };
 
@@ -93,6 +95,20 @@ const barcodeFormatFor = (code: string): BarcodeFormat => {
 
 // Автоопределение формата: чисто цифровые коды считаем штрих-кодами, остальные — QR
 const detectCardFormat = (code: string): "qr" | "barcode" => (/^\d{6,20}$/.test(code) ? "barcode" : "qr");
+
+// ===== Цвета карт лояльности =====
+// Нейтральный графитовый тон по умолчанию (для карт без сохранённого цвета)
+const DEFAULT_CARD_COLOR = "#2f3440";
+
+// Стильные пресеты палитры: графит, красный, синий, зелёный, фиолетовый, оранжевый, жёлтый
+const CARD_COLOR_PRESETS = ["#2f3440", "#e53935", "#3390ec", "#2cb074", "#8e5cf6", "#f7a200", "#f5c518"];
+
+// Мягкий градиент карты: от выбранного цвета к более тёмному тону (#121212),
+// как на реальных дисконтных картах; текст остаётся контрастным
+const cardGradient = (color?: string | null): string => {
+  const base = color || DEFAULT_CARD_COLOR;
+  return `linear-gradient(135deg, ${base} 0%, color-mix(in srgb, ${base} 55%, #121212) 55%, #121212 100%)`;
+};
 
 // Стандартная проверка контрольной цифры GS1 (EAN-8 / UPC-A / EAN-13)
 function gs1ChecksumOk(digits: string): boolean {
@@ -1379,7 +1395,13 @@ useEffect(() => {
   // ===== Карты лояльности =====
   const [cardNameDraft, setCardNameDraft] = useState("");
   const [cardCodeDraft, setCardCodeDraft] = useState("");
+  // Цвет карты: черновик для формы (добавление/редактирование)
+  const [cardColorDraft, setCardColorDraft] = useState(DEFAULT_CARD_COLOR);
+  // Карта в режиме редактирования (undefined — форма создаёт новую карту)
+  const [editingCard, setEditingCard] = useState<LoyaltyCard>();
   const [cardFormError, setCardFormError] = useState<string>();
+  const cardPressTimer = useRef<number | undefined>(undefined);
+  const cardDidLongPress = useRef(false);
   const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
   const html5ScannerRef = useRef<import("html5-qrcode").Html5Qrcode | null>(null);
   const cardScanHandledRef = useRef(false);
@@ -1507,32 +1529,85 @@ useEffect(() => {
     window.setTimeout(() => target.scrollIntoView({ block: "center", behavior: "smooth" }), 250);
   };
 
-  const addLoyaltyCard = async (event: FormEvent<HTMLFormElement>) => {
+  // Сохранение карты: создание новой или обновление существующей
+  // (название, код, формат и цвет) — цвет карты настраивается в обеих формах
+  const submitCardForm = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const name = String(form.get("cardName") ?? "").trim();
     const code = cardCodeDraft.trim();
     const formatChoice = String(form.get("cardFormat") ?? "auto");
+    const color = cardColorDraft || DEFAULT_CARD_COLOR;
 
     if (!name || !code) return;
 
     const format: "qr" | "barcode" = formatChoice === "auto" ? detectCardFormat(code) : (formatChoice as "qr" | "barcode");
-    const cardId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     try {
-      await setDoc(doc(db, "users", getUserId(), "loyalty_cards", cardId), {
-        name,
-        code,
-        format,
-        createdAt: new Date().toISOString(),
-      });
-      setShowCardForm(false);
-      setCardNameDraft("");
-      setCardCodeDraft("");
-      setCardFormError(undefined);
+      if (editingCard) {
+        const updatedCard: LoyaltyCard = { ...editingCard, name, code, format, color };
+        await setDoc(doc(db, "users", getUserId(), "loyalty_cards", editingCard.id), {
+          name: updatedCard.name,
+          code: updatedCard.code,
+          format: updatedCard.format,
+          color: updatedCard.color,
+          createdAt: updatedCard.createdAt,
+        });
+        // Если карта была открыта на весь экран — обновляем её данные на месте
+        setExpandedCard((current) => (current?.id === updatedCard.id ? updatedCard : current));
+      } else {
+        const cardId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        await setDoc(doc(db, "users", getUserId(), "loyalty_cards", cardId), {
+          name,
+          code,
+          format,
+          color,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      closeCardForm();
     } catch {
       setCardFormError(t("cardSaveError"));
     }
+  };
+
+  // Открытие формы для добавления новой карты
+  const openNewCardForm = () => {
+    setEditingCard(undefined);
+    setCardNameDraft("");
+    setCardCodeDraft("");
+    setCardColorDraft(DEFAULT_CARD_COLOR);
+    setCardFormError(undefined);
+    setShowCardForm(true);
+  };
+
+  // Редактирование карты: long-press по карте в списке или кнопка «Изменить»
+  const openCardEditor = (card: LoyaltyCard) => {
+    setEditingCard(card);
+    setCardNameDraft(card.name);
+    setCardCodeDraft(card.code);
+    setCardColorDraft(card.color || DEFAULT_CARD_COLOR);
+    setCardFormError(undefined);
+    setShowCardForm(true);
+  };
+
+  const closeCardForm = () => {
+    setShowCardForm(false);
+    setEditingCard(undefined);
+    setCardFormError(undefined);
+  };
+
+  // Долгое нажатие на карту в списке открывает редактирование (как у категорий/целей)
+  const startCardPress = (card: LoyaltyCard) => {
+    cardDidLongPress.current = false;
+    cardPressTimer.current = window.setTimeout(() => {
+      cardDidLongPress.current = true;
+      openCardEditor(card);
+    }, 650);
+  };
+
+  const endCardPress = () => {
+    if (cardPressTimer.current) window.clearTimeout(cardPressTimer.current);
   };
 
   const removeLoyaltyCard = async (card: LoyaltyCard) => {
@@ -1546,6 +1621,11 @@ useEffect(() => {
   };
 
   const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal || isReceiptLoading || parsedReceipt || showCardForm || expandedCard;
+
+  // Выбран ли «свой» цвет карты (не совпадает ни с одним пресетом)
+  const isCustomCardColor = !CARD_COLOR_PRESETS.some(
+    (preset) => preset.toLowerCase() === cardColorDraft.toLowerCase(),
+  );
 
   // Кнопка переключения языка (RU ⇄ EN) — общий элемент шапки
   const langToggle = (
@@ -2072,7 +2152,7 @@ useEffect(() => {
               <span className="savings-icon"><Icon name="loyalty" /></span>
               <h2>{t("loyaltyTitle")}</h2>
               <p>{t("loyaltySubtitle")}</p>
-              <button type="button" onClick={() => { setCardNameDraft(""); setCardCodeDraft(""); setCardFormError(undefined); setShowCardForm(true); }}>{t("addCard")}</button>
+              <button type="button" onClick={openNewCardForm}>{t("addCard")}</button>
             </section>
           ) : (
             <div className="cards-list">
@@ -2081,7 +2161,16 @@ useEffect(() => {
                   key={card.id}
                   type="button"
                   className="loyalty-card"
+                  style={{ background: cardGradient(card.color) }}
+                  onPointerDown={() => startCardPress(card)}
+                  onPointerUp={endCardPress}
+                  onPointerCancel={endCardPress}
+                  onContextMenu={(e) => e.preventDefault()}
                   onClick={() => {
+                    if (cardDidLongPress.current) {
+                      cardDidLongPress.current = false;
+                      return;
+                    }
                     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
                     setExpandedCard(card);
                   }}
@@ -2097,7 +2186,7 @@ useEffect(() => {
               <button
                 type="button"
                 className="add-card-button"
-                onClick={() => { setCardNameDraft(""); setCardCodeDraft(""); setCardFormError(undefined); setShowCardForm(true); }}
+                onClick={openNewCardForm}
               >
                 <Icon name="plus" />
                 <span>{t("addCard")}</span>
@@ -2324,12 +2413,12 @@ useEffect(() => {
         </div>
       )}
 
-      {/* ===== Модалка добавления карты лояльности ===== */}
+      {/* ===== Модалка добавления / редактирования карты лояльности ===== */}
       {showCardForm && (
-        <div className="modal-backdrop" onClick={() => setShowCardForm(false)}>
+        <div className="modal-backdrop" onClick={closeCardForm}>
           <form
             className="expense-modal expense-modal--plain expense-modal--card"
-            onSubmit={(e) => { e.preventDefault(); void addLoyaltyCard(e); }}
+            onSubmit={(e) => { e.preventDefault(); void submitCardForm(e); }}
             onClick={(e) => e.stopPropagation()}
           >
             <input
@@ -2356,11 +2445,49 @@ useEffect(() => {
                 <Icon name="loyalty" />
               </button>
             </div>
-            <select name="cardFormat" defaultValue="auto" onFocus={scrollFieldIntoView}>
+            <select
+              name="cardFormat"
+              defaultValue={editingCard ? editingCard.format : "auto"}
+              onFocus={scrollFieldIntoView}
+            >
               <option value="auto">{t("formatAuto")}</option>
               <option value="barcode">{t("formatBarcode")}</option>
               <option value="qr">{t("formatQr")}</option>
             </select>
+
+            {/* ===== Цвет карты: пресеты-свотчи + свой цвет ===== */}
+            <div className="card-color-picker" onFocus={scrollFieldIntoView}>
+              <span className="card-color-label">{t("colorLabel")}</span>
+              <div className="card-color-swatches">
+                {CARD_COLOR_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    className={`card-color-swatch${cardColorDraft.toLowerCase() === preset.toLowerCase() ? " selected" : ""}`}
+                    style={{ background: preset }}
+                    onClick={() => setCardColorDraft(preset)}
+                    aria-label={preset}
+                  >
+                    {cardColorDraft.toLowerCase() === preset.toLowerCase() && "✓"}
+                  </button>
+                ))}
+                {/* Свой цвет: нативный инпут поверх кружка-свотча */}
+                <label
+                  className={`card-color-swatch card-color-custom${isCustomCardColor ? " selected" : ""}`}
+                  style={isCustomCardColor ? { background: cardColorDraft } : undefined}
+                  title={t("customColor")}
+                >
+                  <input
+                    type="color"
+                    value={cardColorDraft}
+                    onChange={(e) => setCardColorDraft(e.target.value)}
+                    aria-label={t("customColor")}
+                  />
+                  {isCustomCardColor && "✓"}
+                </label>
+              </div>
+            </div>
+
             {isCameraScannerOpen && (
               <div className="card-scanner-box">
                 <div id="card-scanner-region" />
@@ -2377,7 +2504,7 @@ useEffect(() => {
             {cardFormError && <p className="receipt-error-text">{cardFormError}</p>}
             <div className="button-row">
               <button type="submit" disabled={isSubmitting}>{t("saveCard")}</button>
-              <button type="button" className="danger-button" onClick={() => setShowCardForm(false)}>{t("cancel")}</button>
+              <button type="button" className="danger-button" onClick={closeCardForm}>{t("cancel")}</button>
             </div>
           </form>
         </div>
@@ -2391,7 +2518,8 @@ useEffect(() => {
             if (e.target === e.currentTarget) setExpandedCard(undefined);
           }}
         >
-          <div className="loyalty-fullscreen" onClick={(e) => e.stopPropagation()}>
+          {/* Фон в цвете карты: мягкий градиент от выбранного тона к тёмному */}
+          <div className="loyalty-fullscreen" style={{ background: cardGradient(expandedCard.color) }} onClick={(e) => e.stopPropagation()}>
             <b>{expandedCard.name}</b>
             <small className="loyalty-fullscreen-code">{shortCardCode(expandedCard.code, 44)}</small>
             <div className="loyalty-codes">
@@ -2399,6 +2527,15 @@ useEffect(() => {
             </div>
             <div className="button-row">
               <button type="button" onClick={() => setExpandedCard(undefined)}>{t("collapse")}</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setExpandedCard(undefined);
+                  openCardEditor(expandedCard);
+                }}
+              >
+                {t("editCard")}
+              </button>
               <button type="button" className="danger-button" onClick={() => void removeLoyaltyCard(expandedCard)}>{t("delete")}</button>
             </div>
           </div>
