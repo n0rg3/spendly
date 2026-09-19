@@ -9,7 +9,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 const RECEIPT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-const DEFAULT_CATEGORIES = ["Продукты", "Кафе", "Дом", "Транспорт", "Развлечения", "Остальное"];
+const DEFAULT_CATEGORIES = ["Продукты", "Тусичи", "Дом", "Транспорт", "Развлечения", "Остальное"];
 
 // --- Базовый словарь категорий (Fallback Matcher) ---
 // Локальный маппинг ключевых слов (русский / сербский / латиница). Применяется
@@ -30,12 +30,9 @@ const CATEGORY_GROUPS = [
     ],
   },
   {
-    id: "cafe",
+    id: "tusici",
     keywords: ["kava", "кофе", "pica", "пицца", "burger", "ресторан", "restoran"],
-    names: [
-      "кафе", "рестораны", "ресторан", "кафе и рестораны", "общепит", "фастфуд",
-      "cafe", "cafes", "coffee", "restaurant", "restaurants", "eating out", "fast food",
-    ],
+    names: ["тусичи", "tusici", "тусич"],
   },
   {
     id: "transport",
@@ -88,8 +85,9 @@ function resolveGroupCategory(group, categoriesList) {
   return null;
 }
 
-// Fallback-категория для позиции чека по базовому словарю (или null)
-function fallbackCategoryFor(itemName, categoriesList) {
+// Fallback-категория для позиции чека по базовому словарю (или null).
+// Экспортируется для тестов
+export function fallbackCategoryFor(itemName, categoriesList) {
   const name = String(itemName || "").trim();
   if (!name) return null;
   for (const group of CATEGORY_GROUPS) {

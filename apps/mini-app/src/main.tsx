@@ -1114,20 +1114,21 @@ useEffect(() => {
       grouped.set(key, group);
     });
 
-    // Внутри каждой категории траты сортируются по алфавиту (описание/название)
+    // Внутри категории траты сортируются по дате — самые свежие наверху
     grouped.forEach((expenses, key) => {
       grouped.set(
         key,
-        [...expenses].sort((a, b) =>
-          (a.description || a.category?.name || "").localeCompare(
-            b.description || b.category?.name || "",
-            intlLocale(lang),
-          ),
-        ),
+        [...expenses].sort((a, b) => {
+          const timeA = Date.parse(a.createdAt ?? "");
+          const timeB = Date.parse(b.createdAt ?? "");
+          const safeA = Number.isNaN(timeA) ? 0 : timeA;
+          const safeB = Number.isNaN(timeB) ? 0 : timeB;
+          return safeB - safeA;
+        }),
       );
     });
 
-    // Сами группы категорий — тоже по алфавиту (стабильный порядок аккордеона)
+    // Сами карточки-категории остаются по алфавиту (стабильный порядок аккордеона)
     return new Map(
       [...grouped.entries()].sort((a, b) => {
         const nameA = a[1][0]?.category?.name ?? t("categoryOther");

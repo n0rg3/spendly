@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import handler from "../api/parse-receipt.js";
+import handler, { fallbackCategoryFor } from "../api/parse-receipt.js";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const receiptHtml = readFileSync(join(fixturesDir, "receipt.html"), "utf-8");
@@ -93,6 +93,15 @@ test("fallback: ключевые слова латиницей и кирилли
 
   assert.equal(status, 200);
   assert.equal(body.items[1].category, "Продукты");
+});
+
+test("fallback: группа кафе/рестораны заменена на Тусичи", () => {
+  // kava/pizza/burger/restoran маппятся в категорию «Тусичи»
+  assert.equal(fallbackCategoryFor("KAVA NESCAFE 2", ["Тусичи", "Еда"]), "Тусичи");
+  assert.equal(fallbackCategoryFor("PICA CAPRICCiosa 32cm", ["Тусичи"]), "Тусичи");
+  assert.equal(fallbackCategoryFor("burger king meni", ["Tusici"]), "Tusici");
+  // Старые имена «Кафе»/«Рестораны» больше не являются целью группы
+  assert.equal(fallbackCategoryFor("KAVA NESCAFE 2", ["Кафе", "Рестораны"]), null);
 });
 
 test("CORS: github.io получает свой origin, чужой домен — без заголовка", async () => {

@@ -1,7 +1,11 @@
 // apps/mini-app/src/chartGradient.ts
 // Построение конического градиента круговой диаграммы с учётом выбранной
-// категории: выбранная часть подсвечивается, остальные — приглушаются,
-// но НЕ меняют своих пропорций (сектор не увеличивается в размерах).
+// категории.
+//
+// Базовое состояние: секторы окрашены теми же цветами, что и карточки
+// категорий (пастельный bg из getCategoryColor). Ярким (плотный chart-цвет)
+// сектор становится ТОЛЬКО при выделении своей категории — пропорции при
+// этом не искажаются, сектор всегда отражает реальный процент от суммы.
 
 export type CategoryStat = {
   id: string;
@@ -17,10 +21,9 @@ const EMPTY_RING = "conic-gradient(#e9ebf3 0 100%)";
 /**
  * Строит conic-gradient для круговой диаграммы.
  *
- * Важно: выбранная категория НЕ увеличивается в размерах — её сектор
- * всегда отражает реальный процент от общей суммы трат. Подсветка
- * достигается за счёт приглушения остальных секторов (color-mix с
- * фоном), а не за счёт изменения пропорций.
+ * Секторы в базовом состоянии идентичны цветам карточек категорий (bg).
+ * Выделенная категория подсвечивается ярким цветом сектора (chart) —
+ * как сейчас, но пропорции кольца не меняются.
  */
 export function buildChartGradient(
   stats: CategoryStat[],
@@ -34,20 +37,17 @@ export function buildChartGradient(
     ? stats.findIndex((item) => item.id === selectedId)
     : -1;
   // Выбранной категории может не быть среди секторов (нет трат в этом месяце) —
-  // тогда подсвечивать нечего: рисуем обычную диаграмму без приглушения
+  // тогда подсвечивать нечего: рисуем диаграмму в базовых цветах карточек
   const hasSelectedSegment = selectedIndex >= 0;
 
   // Все секторы рисуются в реальных пропорциях от общей суммы.
-  // Выбранная категория не меняет свой угол — подсвечивается лишь визуально.
+  // Базовый цвет = цвет карточки категории; ярким становится только выделенный
   let position = 0;
   const segments = stats.map((item, index) => {
     const share = (item.amount / total) * 100;
     const end = position + share;
-    // Остальные секторы приглушаются — выбранная часть читается как ярче
-    const dimmed = hasSelectedSegment && index !== selectedIndex;
-    const color = dimmed
-      ? `color-mix(in srgb, ${item.color.chart} 45%, var(--secondary-bg-color))`
-      : item.color.chart;
+    const isSelected = hasSelectedSegment && index === selectedIndex;
+    const color = isSelected ? item.color.chart : item.color.bg;
     const segment = `${color} ${position}% ${end}%`;
     position = end;
     return segment;
