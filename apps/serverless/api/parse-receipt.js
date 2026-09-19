@@ -9,7 +9,96 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 const RECEIPT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-const DEFAULT_CATEGORIES = ["Продукты", "Кафе", "Дом", "Транспорт", "Развлечения", "Другое"];
+const DEFAULT_CATEGORIES = ["Продукты", "Кафе", "Дом", "Транспорт", "Развлечения", "Остальное"];
+
+// --- Базовый словарь категорий (Fallback Matcher) ---
+// Локальный маппинг ключевых слов (русский / сербский / латиница). Применяется
+// ПОСЛЕ кэша сопоставлений и Gemini, перед финальным сбросом в null:
+// если товар узнали по ключевому слову — присваиваем категорию пользователя.
+// names — синонимы группы: имя категории пользователя считается совпавшим,
+// если оно равно (или содержит) один из синонимов (без учёта регистра).
+const CATEGORY_GROUPS = [
+  {
+    id: "food",
+    keywords: [
+      "hleb", "хлеб", "mleko", "молоко", "voda", "вода", "sir", "сыр",
+      "meso", "мясо", "jaja", "яйца", "maxi", "idea", "lidl",
+    ],
+    names: [
+      "продукты", "продукты питания", "еда", "продовольствие", "супермаркет",
+      "продуктовый магазин", "food", "groceries", "grocery", "supermarket", "храна",
+    ],
+  },
+  {
+    id: "cafe",
+    keywords: ["kava", "кофе", "pica", "пицца", "burger", "ресторан", "restoran"],
+    names: [
+      "кафе", "рестораны", "ресторан", "кафе и рестораны", "общепит", "фастфуд",
+      "cafe", "cafes", "coffee", "restaurant", "restaurants", "eating out", "fast food",
+    ],
+  },
+  {
+    id: "transport",
+    keywords: ["gorivo", "бензин", "taxi", "такси", "parking", "паркинг", "парковка"],
+    names: [
+      "транспорт", "авто", "автомобиль", "топливо", "горючее", "бензин",
+      "transport", "car", "fuel", "petrol", "gas", "gorivo",
+    ],
+  },
+];
+
+// Нормализация текста: lowercase, ё→е, всё не-буквенное — в пробел
+function normalizeText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+// Ключевое слово совпадает, если какой-то токен названия равен ему
+// или начинается с него (склонения: «молоко» → «молочный»)
+function matchesKeyword(name, keyword) {
+  const kw = normalizeText(keyword);
+  if (!kw) return false;
+  const tokens = normalizeText(name).split(" ").filter(Boolean);
+  return tokens.some((token) => token === kw || (kw.length >= 3 && token.startsWith(kw)));
+}
+
+// Имя категории пользователя, соответствующее смысловой группе (или null)
+function resolveGroupCategory(group, categoriesList) {
+  const normalized = categoriesList.map((name) => ({ name, norm: normalizeText(name) }));
+
+  // 1) точное совпадение с синонимом группы
+  for (const alias of group.names) {
+    const aliasNorm = normalizeText(alias);
+    const hit = normalized.find((entry) => entry.norm === aliasNorm);
+    if (hit) return hit.name;
+  }
+
+  // 2) частичное совпадение («Кафе и рестораны», «Продукты из Lidl» и т.п.)
+  for (const alias of group.names) {
+    const aliasNorm = normalizeText(alias);
+    const hit = normalized.find(
+      (entry) => entry.norm.length >= 3 && (entry.norm.includes(aliasNorm) || aliasNorm.includes(entry.norm)),
+    );
+    if (hit) return hit.name;
+  }
+
+  return null;
+}
+
+// Fallback-категория для позиции чека по базовому словарю (или null)
+function fallbackCategoryFor(itemName, categoriesList) {
+  const name = String(itemName || "").trim();
+  if (!name) return null;
+  for (const group of CATEGORY_GROUPS) {
+    if (group.keywords.some((keyword) => matchesKeyword(name, keyword))) {
+      return resolveGroupCategory(group, categoriesList);
+    }
+  }
+  return null;
+}
 
 // Актуальная модель Gemini (gemini-2.0-flash снята с поддержки — API отвечает 404)
 const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
@@ -159,24 +248,32 @@ async function categorizeReceiptItems(items, categoriesList, categoryCache = {})
   // Ключ — нормализованное имя товара (lowercase, trimmed).
   const normalize = (name) => String(name || "").toLowerCase().replace(/\s+/g, " ").trim();
 
+  // Финальная сборка ответа: для позиций без категории (Gemini вернул null /
+  // упал / нет ключа) применяем базовый словарь — и только потом сбрасываем в null
+  const withFallback = (results) =>
+    results.map(({ item, category }) => ({
+      ...item,
+      category: category ?? fallbackCategoryFor(item.name, categoriesList),
+    }));
+
   // Сначала подставляем категории из кэша — такие позиции в Gemini не уходят
   const resolved = items.map((item) => {
     const cachedCategory = categoryCache[normalize(item.name)] ?? null;
     return {
       item,
-      cachedCategory: cachedCategory && categoriesList.includes(cachedCategory) ? cachedCategory : null,
+      category: cachedCategory && categoriesList.includes(cachedCategory) ? cachedCategory : null,
     };
   });
 
-  const uncached = resolved.filter((entry) => entry.cachedCategory === null);
+  const uncached = resolved.filter((entry) => entry.category === null);
 
   // Всё уже в кэше — Gemini не нужен вовсе
   if (uncached.length === 0) {
-    return resolved.map(({ item, cachedCategory }) => ({ ...item, category: cachedCategory }));
+    return withFallback(resolved);
   }
 
   if (!process.env.GEMINI_API_KEY || categoriesList.length === 0) {
-    return resolved.map(({ item, cachedCategory }) => ({ ...item, category: cachedCategory }));
+    return withFallback(resolved);
   }
 
   const prompt = [
@@ -211,14 +308,16 @@ async function categorizeReceiptItems(items, categoriesList, categoryCache = {})
       // Мержим категории от LLM: ответы приходят только для некэшированных позиций
       // (тот же порядок, что и в списке uncached), закэшированные уже проставлены
       let aiIndex = 0;
-      return resolved.map(({ item, cachedCategory }) => {
-        if (cachedCategory !== null) {
-          return { ...item, category: cachedCategory };
-        }
-        const aiItem = parsed[aiIndex++];
-        const aiCategory = typeof aiItem?.category === "string" ? aiItem.category : null;
-        return { ...item, category: aiCategory && allowed.has(aiCategory) ? aiCategory : null };
-      });
+      return withFallback(
+        resolved.map(({ item, category }) => {
+          if (category !== null) {
+            return { item, category };
+          }
+          const aiItem = parsed[aiIndex++];
+          const aiCategory = typeof aiItem?.category === "string" ? aiItem.category : null;
+          return { item, category: aiCategory && allowed.has(aiCategory) ? aiCategory : null };
+        }),
+      );
     } catch (error) {
       lastError = error;
       console.error(`Gemini model "${modelName}" failed:`, error instanceof Error ? error.message : error);
@@ -226,7 +325,7 @@ async function categorizeReceiptItems(items, categoriesList, categoryCache = {})
   }
 
   console.error("Gemini categorization failed for all models:", lastError instanceof Error ? lastError.message : lastError);
-  return items.map((item) => ({ ...item, category: null }));
+  return withFallback(resolved.map(({ item }) => ({ item, category: null })));
 }
 
 // --- Vercel handler ---

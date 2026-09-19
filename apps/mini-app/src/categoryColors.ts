@@ -25,14 +25,30 @@ const BORDER_ALPHA = 0.35;
 const CHART_SATURATION = 65;
 const CHART_LIGHTNESS = 55;
 
-/** Возвращает палитру категории: фон, рамка и цвет сектора диаграммы. */
-export const getCategoryColor = (categoryName: string): CategoryColor => {
-  // Строковый хэш (djb2-подобный) → hue 0..359
-  let hash = 0;
-  for (let i = 0; i < categoryName.length; i++) {
-    hash = categoryName.charCodeAt(i) + ((hash << 5) - hash);
+/** Шаг золотого сечения: hue соседних категорий разводится на 137.5°, чтобы секторы не сливались. */
+export const GOLDEN_RATIO_STEP = 137.5;
+
+const normalizeHue = (hue: number): number => ((hue % 360) + 360) % 360;
+
+/**
+ * Возвращает палитру категории: фон, рамка и цвет сектора диаграммы.
+ *
+ * @param categoryName  имя категории — из него детерминированно считается hue
+ * @param hueOverride   явный hue (например, золотое сечение для секторов диаграммы);
+ *                      если не задан, hue считается из имени категории
+ */
+export const getCategoryColor = (categoryName: string, hueOverride?: number): CategoryColor => {
+  let hue: number;
+  if (hueOverride !== undefined) {
+    hue = normalizeHue(hueOverride);
+  } else {
+    // Строковый хэш (djb2-подобный) → hue 0..359
+    let hash = 0;
+    for (let i = 0; i < categoryName.length; i++) {
+      hash = categoryName.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    hue = normalizeHue(Math.abs(hash));
   }
-  const hue = Math.abs(hash) % 360;
   return {
     bg: `hsla(${hue}, ${BG_SATURATION}%, ${BG_LIGHTNESS}%, ${BG_ALPHA})`,
     border: `hsla(${hue}, ${BORDER_SATURATION}%, ${BORDER_LIGHTNESS}%, ${BORDER_ALPHA})`,

@@ -62,12 +62,37 @@ test("парсит позиции чека (название в отдельно
   assert.ok(Math.abs(body.total - 194.98) < 1e-9, `total = ${body.total}`);
 });
 
-test("без GEMINI_API_KEY возвращает category: null (парсинг не ломается)", async () => {
+test("без GEMINI_API_KEY работает fallback-словарь: VODA -> Продукты, остальные null", async () => {
   delete process.env.GEMINI_API_KEY;
   const { status, body } = await invoke({ body: { qrUrl: QR_URL } });
 
   assert.equal(status, 200);
-  assert.ok(body.items.every((item) => item.category === null));
+  // «VODA MINERALNA…» совпадает с ключевым словом «voda» -> категория по умолчанию;
+  // BOMBONE и KESA в словаре не найдены — остаются без категории
+  assert.deepEqual(body.items.map((item) => item.category), [null, "Продукты", null]);
+});
+
+test("fallback-словарь подставляет категорию пользователя (русский/латиница)", async () => {
+  delete process.env.GEMINI_API_KEY;
+
+  const { status, body } = await invoke({
+    body: { qrUrl: QR_URL, categories: ["Еда", "Кафе", "Транспорт"] },
+  });
+
+  assert.equal(status, 200);
+  // «voda» из словаря маппится в пользовательскую категорию «Еда»
+  assert.deepEqual(body.items.map((item) => item.category), [null, "Еда", null]);
+});
+
+test("fallback: ключевые слова латиницей и кириллицей маппятся в свои группы", async () => {
+  delete process.env.GEMINI_API_KEY;
+
+  const { status, body } = await invoke({
+    body: { qrUrl: QR_URL, categories: ["Продукты", "Кафе", "Транспорт", "Остальное"] },
+  });
+
+  assert.equal(status, 200);
+  assert.equal(body.items[1].category, "Продукты");
 });
 
 test("CORS: github.io получает свой origin, чужой домен — без заголовка", async () => {

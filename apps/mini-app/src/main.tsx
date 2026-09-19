@@ -6,7 +6,17 @@ import { collection, doc, setDoc, getDoc, deleteDoc, onSnapshot, query, orderBy 
 import { QRCodeSVG } from "qrcode.react";
 import Barcode, { type BarcodeProps } from "react-barcode";
 import { db } from "./firebase";
-import { getCategoryColor } from "./categoryColors";
+import { getCategoryColor, GOLDEN_RATIO_STEP } from "./categoryColors";
+import {
+  ICON_LABELS,
+  MONTHS,
+  intlLocale,
+  loadLang,
+  makeT,
+  saveLang,
+  type Lang,
+  type Translator,
+} from "./i18n";
 import { buildChartGradient, type CategoryStat } from "./chartGradient";
 import { nextSelectedCategoryIdOnOutsideTap } from "./chartInteraction";
 import "./styles.css";
@@ -141,23 +151,32 @@ function shortCardCode(code: string, max = 24): string {
   return `${code.slice(0, Math.max(max - 1, 1))}…`;
 }
 
-const DEFAULT_DASHBOARD: Dashboard = {
-  categories: [
-    { id: "1", name: "Еда", icon: "food", color: "#3390ec" },
-    { id: "2", name: "Транспорт", icon: "transport", color: "#2cb074" },
-    { id: "3", name: "Покупки", icon: "shopping", color: "#f7a200" },
-  ],
+// Дефолтный дашборд для нового пользователя: названия стартовых категорий
+// зависят от языка интерфейса (существующие профили в Firestore не трогаем)
+const defaultDashboard = (lang: Lang): Dashboard => ({
+  categories: lang === "ru"
+    ? [
+        { id: "1", name: "Еда", icon: "food", color: "#3390ec" },
+        { id: "2", name: "Транспорт", icon: "transport", color: "#2cb074" },
+        { id: "3", name: "Покупки", icon: "shopping", color: "#f7a200" },
+      ]
+    : [
+        { id: "1", name: "Food", icon: "food", color: "#3390ec" },
+        { id: "2", name: "Transport", icon: "transport", color: "#2cb074" },
+        { id: "3", name: "Shopping", icon: "shopping", color: "#f7a200" },
+      ],
   expenses: [],
   totalSpent: 0,
   userCreatedAt: new Date().toISOString(),
   savingsGoals: [],
-};
+});
 
 // Цвета категорий не хранятся константами: количество категорий динамическое,
 // палитра считается хэшем от названия — см. getCategoryColor в ./categoryColors
 
-// Псевдо-категория: модалка траты открыта вручную (без категории)
-const MANUAL_NO_CATEGORY: Category = { id: "", name: "Без категории", icon: "other", color: null };
+// Псевдо-категория: модалка траты открыта вручную (без категории).
+// Совпадение всегда по id (""), а позиция без категории попадает в «Остальное»
+const MANUAL_NO_CATEGORY: Category = { id: "", name: "Остальное", icon: "other", color: null };
 
 function getUserId(): string {
   const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
@@ -225,7 +244,7 @@ function receiptDateToIso(value: string | null): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function formatMonth(value: string) {
+function formatMonth(value: string, lang: Lang = "ru") {
   if (!value || typeof value !== "string" || !value.includes("-")) {
     return "";
   }
@@ -239,7 +258,7 @@ function formatMonth(value: string) {
   const date = new Date(year, month - 1, 1);
   if (isNaN(date.getTime())) return "";
 
-  return new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" }).format(date);
+  return new Intl.DateTimeFormat(lang === "en" ? "en-US" : "ru-RU", { month: "long", year: "numeric" }).format(date);
 }
 
 const ICON_MAP: Record<string, keyof typeof LucideIcons> = {
@@ -298,54 +317,7 @@ const ICON_MAP: Record<string, keyof typeof LucideIcons> = {
 };
 
 const CATEGORY_ICONS = Object.keys(ICON_MAP).filter((key) => !["grid", "card", "chart", "goal", "plus", "arrow", "loyalty"].includes(key));
-
-const ICON_LABELS: Record<string, string> = {
-  food: "Еда",
-  transport: "Транспорт",
-  shopping: "Покупки",
-  ent: "Развлечения",
-  health: "Здоровье",
-  home: "Дом",
-  gift: "Подарки",
-  wallet: "Кошелёк",
-  coffee: "Кофе",
-  book: "Книга",
-  movie: "Кино",
-  music: "Музыка",
-  phone: "Телефон",
-  travel: "Путешествие",
-  sport: "Спорт",
-  education: "Образование",
-  pet: "Питомец",
-  beauty: "Красота",
-  clothing: "Одежда",
-  other: "Другое",
-  baby: "Дети",
-  bank: "Банк",
-  beer: "Алкоголь",
-  bike: "Велосипед",
-  bus: "Автобус",
-  camera: "Фото",
-  clapper: "Видео",
-  cloud: "Облако",
-  coins: "Монеты",
-  game: "Игры",
-  gas: "Бензин",
-  glasses: "Зрение",
-  icecream: "Десерты",
-  lamp: "Свет",
-  leaf: "Природа",
-  paint: "Творчество",
-  pizza: "Пицца",
-  receipt: "Чеки",
-  scissors: "Услуги",
-  tools: "Инструменты",
-  train: "Поезд",
-  tv: "ТВ",
-  umbrella: "Зонт",
-  wine: "Вино",
-  wrench: "Ремонт",
-};
+// Подписи иконок локализованы в ./i18n (ICON_LABELS: { ru, en })
 
 function Icon({ name }: { name: string }) {
   const iconName = ICON_MAP[name] || ICON_MAP.other;
@@ -353,11 +325,21 @@ function Icon({ name }: { name: string }) {
   return <LucideIcon size={22} strokeWidth={1.9} />;
 }
 
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RSD", maximumFractionDigits: 0 }).format(value);
+function formatMoneyWithLang(value: number, lang: Lang = "ru") {
+  return new Intl.NumberFormat(intlLocale(lang), { style: "currency", currency: "RSD", maximumFractionDigits: 0 }).format(value);
 }
 
-function ExpenseRow({ expense, onLongPress }: { expense: Expense; onLongPress: () => void }) {
+function ExpenseRow({
+  expense,
+  lang,
+  t,
+  onLongPress,
+}: {
+  expense: Expense;
+  lang: Lang;
+  t: Translator;
+  onLongPress: () => void;
+}) {
   // Иконка строки траты остаётся нейтральной: цвет категории используется
   // только для плашек категорий и секторов диаграммы (без перекрашивания иконок)
   const { date, time } = useMemo(() => {
@@ -391,11 +373,11 @@ function ExpenseRow({ expense, onLongPress }: { expense: Expense; onLongPress: (
     >
       <span className="expense-icon">{expense.category?.icon ? <Icon name={expense.category.icon} /> : "•"}</span>
       <div className="expense-info">
-        <strong>{expense.description || expense.category?.name || "Расход"}</strong>
-        <small>{expense.category?.name ?? "Без категории"}</small>
+        <strong>{expense.description || expense.category?.name || t("expenseFallback")}</strong>
+        <small>{expense.category?.name ?? t("categoryOther")}</small>
       </div>
       <div className="expense-amount">
-        <b>−{formatMoney(expense.amount)}</b>
+        <b>−{formatMoneyWithLang(expense.amount, lang)}</b>
         <time>{date} {time}</time>
       </div>
     </button>
@@ -424,9 +406,9 @@ class CodeErrorBoundary extends Component<{ children: ReactNode; fallback: React
 // CodeErrorBoundary — аналог try/catch: ошибки jsbarcode происходят внутри useEffect
 // компонента react-barcode и обычным try/catch не ловятся, поэтому вместо пустой
 // белой плашки автоматически рендерится QR-код.
-function CardCodeView({ card }: { card: LoyaltyCard }) {
+function CardCodeView({ card, t }: { card: LoyaltyCard; t: Translator }) {
   if (!card.code) {
-    return <p className="loyalty-codes-empty">У карты нет кода</p>;
+    return <p className="loyalty-codes-empty">{t("cardNoCode")}</p>;
   }
 
   const qrFallback = (
@@ -502,6 +484,8 @@ function evaluateExpression(expression: string): number {
 function App() {
   const telegram = window.Telegram?.WebApp;
   const [dashboard, setDashboard] = useState<Dashboard>();
+  // Язык интерфейса: автоопределение (Telegram/браузер) + переключатель в шапке
+  const [lang, setLang] = useState<Lang>(loadLang);
   const [activeTab, setActiveTab] = useState<Tab>("chart");
   const [error, setError] = useState<string>();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -533,6 +517,19 @@ function App() {
   const goalDidLongPress = useRef(false);
   const operatorInputRef = useRef<HTMLInputElement | null>(null);
   const amountInputRef = useRef<HTMLInputElement | null>(null);
+
+  // ===== Локализация (RU / EN) =====
+  // t — переводчик; локальная обёртка formatMoney сохраняет имя функции,
+  // чтобы не менять десятки мест вызова внутри компонента
+  const t = useMemo(() => makeT(lang), [lang]);
+  const formatMoney = (value: number) => formatMoneyWithLang(value, lang);
+  const iconLabel = (icon: string) => ICON_LABELS[lang][icon] ?? ICON_LABELS.ru[icon] ?? "•";
+  const toggleLang = () =>
+    setLang((current) => {
+      const next: Lang = current === "ru" ? "en" : "ru";
+      saveLang(next);
+      return next;
+    });
 
   // Сброс прокрутки страницы при открытии клавиатуры (предотвращает сдвиг окна вверх)
 // Сброс прокрутки страницы при открытии клавиатуры (предотвращает сдвиг окна вверх)
@@ -605,13 +602,14 @@ useEffect(() => {
         if (docSnap.exists()) {
           setDashboard(docSnap.data() as Dashboard);
         } else {
-          void setDoc(userDocRef, DEFAULT_DASHBOARD);
-          setDashboard(DEFAULT_DASHBOARD);
+          const initialDashboard = defaultDashboard(lang);
+          void setDoc(userDocRef, initialDashboard);
+          setDashboard(initialDashboard);
         }
       },
       (err) => {
         console.error("Firestore error:", err);
-        setError("Ошибка подключения к облаку");
+        setError(t("cloudError"));
       }
     );
 
@@ -677,7 +675,7 @@ useEffect(() => {
       formElement.reset();
       setShowCategoryForm(false);
     } catch {
-      setError("Could not add a category");
+      setError(t("categoryAddError"));
     } finally {
       setIsSubmitting(false);
     }
@@ -718,7 +716,7 @@ useEffect(() => {
       setShowExpenseForm(false);
       setExpenseCategory(undefined);
     } catch {
-      setError("Не удалось добавить расход");
+      setError(t("expenseAddError"));
     } finally {
       setIsSubmitting(false);
     }
@@ -762,7 +760,7 @@ useEffect(() => {
       await saveToFirebase({ ...dashboard, categories: updatedCategories, expenses: updatedExpenses });
       setEditingCategory(undefined);
     } catch {
-      setError("Не удалось изменить категорию");
+      setError(t("categoryUpdateError"));
     } finally {
       setIsSubmitting(false);
     }
@@ -778,7 +776,7 @@ useEffect(() => {
     const createdAt = new Date(localDateTime);
 
     if (Number.isNaN(createdAt.getTime())) {
-      setError("Укажите корректные дату и время");
+      setError(t("invalidDateTime"));
       return;
     }
 
@@ -789,7 +787,7 @@ useEffect(() => {
     const category = dashboard.categories.find((c) => c.id === categoryId) || null;
 
     if (!amountStr || !amount || amount <= 0) {
-      setError("Укажите корректную сумму");
+      setError(t("invalidAmount"));
       return;
     }
 
@@ -809,14 +807,14 @@ useEffect(() => {
       });
       setEditingExpense(undefined);
     } catch {
-      setError("Не удалось изменить трату");
+      setError(t("expenseUpdateError"));
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const deleteCategory = async () => {
-    if (!editingCategory || !dashboard || !window.confirm(`Удалить категорию «${editingCategory.name}»?`)) return;
+    if (!editingCategory || !dashboard || !window.confirm(t("confirmDeleteCategory", { name: editingCategory.name }))) return;
 
     setIsSubmitting(true);
     setError(undefined);
@@ -830,14 +828,14 @@ useEffect(() => {
       await saveToFirebase({ ...dashboard, categories: updatedCategories, expenses: updatedExpenses });
       setEditingCategory(undefined);
     } catch {
-      setError("Не удалось удалить категорию");
+      setError(t("categoryDeleteError"));
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const deleteExpense = async () => {
-    if (!editingExpense || !dashboard || !window.confirm("Удалить трату?")) return;
+    if (!editingExpense || !dashboard || !window.confirm(t("confirmDeleteExpense"))) return;
 
     setIsSubmitting(true);
     setError(undefined);
@@ -851,7 +849,7 @@ useEffect(() => {
       });
       setEditingExpense(undefined);
     } catch {
-      setError("Не удалось удалить трату");
+      setError(t("expenseDeleteError"));
     } finally {
       setIsSubmitting(false);
     }
@@ -889,7 +887,7 @@ useEffect(() => {
       formElement.reset();
       setShowGoalForm(false);
     } catch {
-      setError("Не удалось создать цель");
+      setError(t("goalAddError"));
     } finally {
       setIsSubmitting(false);
     }
@@ -918,14 +916,14 @@ useEffect(() => {
       await saveToFirebase({ ...dashboard, savingsGoals: updatedGoals });
       setEditingGoal(undefined);
     } catch {
-      setError("Не удалось изменить цель");
+      setError(t("goalUpdateError"));
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const deleteGoal = async () => {
-    if (!editingGoal || !dashboard || !window.confirm(`Удалить цель «${editingGoal.name}»?`)) return;
+    if (!editingGoal || !dashboard || !window.confirm(t("confirmDeleteGoal", { name: editingGoal.name }))) return;
 
     setIsSubmitting(true);
     setError(undefined);
@@ -934,7 +932,7 @@ useEffect(() => {
       await saveToFirebase({ ...dashboard, savingsGoals: updatedGoals });
       setEditingGoal(undefined);
     } catch {
-      setError("Не удалось удалить цель");
+      setError(t("goalDeleteError"));
     } finally {
       setIsSubmitting(false);
     }
@@ -962,7 +960,7 @@ useEffect(() => {
       setGoalTopUpGoal(undefined);
       setGoalOperationType(null);
     } catch {
-      setError("Не удалось обновить цель");
+      setError(t("goalSaveError"));
     } finally {
       setIsSubmitting(false);
     }
@@ -1016,7 +1014,7 @@ useEffect(() => {
 
     filteredExpenses.forEach((expense) => {
       const key = expense.category?.id ?? "other";
-      const name = expense.category?.name ?? "Другое";
+      const name = expense.category?.name ?? t("categoryOther");
       const current = data.get(key) ?? {
         id: key,
         name,
@@ -1029,8 +1027,17 @@ useEffect(() => {
       data.set(key, current);
     });
 
-    return [...data.values()].sort((a, b) => b.amount - a.amount);
-  }, [filteredExpenses]);
+    // Секторы рисуются по убыванию суммы, поэтому порядок в массиве = порядок
+    // секторов на кольце. Пересчитываем hue золотым сечением (шаг 137.5°):
+    // цвета остаются из той же палитры, что у карточек категорий, но у соседних
+    // секторов hue разводится, чтобы они не сливались
+    return [...data.values()]
+      .sort((a, b) => b.amount - a.amount)
+      .map((item, index) => ({
+        ...item,
+        color: getCategoryColor(item.name, index * GOLDEN_RATIO_STEP),
+      }));
+  }, [filteredExpenses, t]);
 
   // Цвета плашек категорий в сетке под графиком = цвета их секторов на диаграмме
   const categoryColorById = useMemo(
@@ -1070,7 +1077,7 @@ useEffect(() => {
 
   // Подпись в центре кольца: без выбора — месяц целиком, с выбором — имя
   // выбранной категории, её сумма и доля в тратах месяца
-  const donutLabel = selectedCategoryMeta?.name ?? "Total";
+  const donutLabel = selectedCategoryMeta?.name ?? t("total");
   const donutAmount = selectedCategoryMeta ? selectedCategoryMeta.amount : chartTotal;
   const donutPercent =
     selectedCategoryMeta && chartTotal > 0
@@ -1078,28 +1085,16 @@ useEffect(() => {
       : undefined;
 
   const user = telegram?.initDataUnsafe?.user;
+  // Категории в выпадающих списках и сетке — по алфавиту (учитывая язык интерфейса)
   const sortedCategories = [...(dashboard?.categories ?? [])].sort((left, right) =>
-    left.name.localeCompare(right.name, "ru")
+    left.name.localeCompare(right.name, intlLocale(lang))
   );
   const [selectedYear, selectedMonthNumber] = selectedMonth.split("-").map(Number);
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
   const startYear = dashboard?.userCreatedAt ? new Date(dashboard.userCreatedAt).getFullYear() : currentYear;
-  const monthNames = [
-    "Январь",
-    "Февраль",
-    "Март",
-    "Апрель",
-    "Май",
-    "Июнь",
-    "Июль",
-    "Август",
-    "Сентябрь",
-    "Октябрь",
-    "Ноябрь",
-    "Декабрь",
-  ];
+  const monthNames = MONTHS[lang];
 
   const changeMonthPart = (year: number, month: number) => {
     let targetMonth = month;
@@ -1118,8 +1113,29 @@ useEffect(() => {
       group.push(ex);
       grouped.set(key, group);
     });
-    return grouped;
-  }, [filteredExpenses]);
+
+    // Внутри каждой категории траты сортируются по алфавиту (описание/название)
+    grouped.forEach((expenses, key) => {
+      grouped.set(
+        key,
+        [...expenses].sort((a, b) =>
+          (a.description || a.category?.name || "").localeCompare(
+            b.description || b.category?.name || "",
+            intlLocale(lang),
+          ),
+        ),
+      );
+    });
+
+    // Сами группы категорий — тоже по алфавиту (стабильный порядок аккордеона)
+    return new Map(
+      [...grouped.entries()].sort((a, b) => {
+        const nameA = a[1][0]?.category?.name ?? t("categoryOther");
+        const nameB = b[1][0]?.category?.name ?? t("categoryOther");
+        return nameA.localeCompare(nameB, intlLocale(lang));
+      }),
+    );
+  }, [filteredExpenses, lang, t]);
 
   const toggleAccordion = (id: string) => {
     const next = new Set(expandedAccId);
@@ -1195,14 +1211,12 @@ useEffect(() => {
 
       if (!apiUrl) {
         if (!isLocalPage) {
-          throw new Error(
-            "API не настроен: задай VITE_API_URL (адрес serverless-функции, напр. https://<project>.vercel.app) и пересобери приложение",
-          );
+          throw new Error(t("apiNotConfigured"));
         }
       } else if (/change-me|your-app|example\.com/i.test(apiUrl)) {
-        throw new Error(`API не настроен: VITE_API_URL всё ещё содержит заглушку (${apiUrl})`);
+        throw new Error(t("apiPlaceholder", { url: apiUrl }));
       } else if (!isLocalPage && /^(https?:\/\/)?(localhost|127\.0\.0\.1)/i.test(apiUrl)) {
-        throw new Error(`Некорректный VITE_API_URL (${apiUrl}): на GitHub Pages нельзя обращаться к localhost`);
+        throw new Error(t("apiLocalhost", { url: apiUrl }));
       }
 
       if (!apiUrl) {
@@ -1243,7 +1257,7 @@ useEffect(() => {
     } catch (error) {
       console.error("API Error Details:", error);
       console.error("API Error Message:", error instanceof Error ? error.message : String(error));
-      setReceiptError(error instanceof Error ? error.message : "Ошибка загрузки чека");
+      setReceiptError(error instanceof Error ? error.message : t("receiptLoadError"));
     } finally {
       setIsReceiptLoading(false);
     }
@@ -1266,11 +1280,14 @@ useEffect(() => {
     telegram?.offEvent("scanQrPopupClosed", handleReceiptScanClosed);
   };
 
-  // Черновики позиций чека: название, сумма и категория, отредактированные вручную
-  const [receiptDrafts, setReceiptDrafts] = useState<Record<number, { name?: string; amount: number; categoryId: string }>>({});
+  // Черновики позиций чека: название, сумма и категория, отредактированные вручную.
+  // ВАЖНО: черновик хранит только реально изменённые поля — ручной выбор категории
+  // меняет исключительно привязку категории и НЕ трогает сумму позиции,
+  // поэтому итог чека не «списывается» при смене категории
+  const [receiptDrafts, setReceiptDrafts] = useState<Record<number, Partial<{ name: string; amount: number; categoryId: string }>>>({});
 
   const setReceiptDraft = (index: number, patch: Partial<{ name: string; amount: number; categoryId: string }>) => {
-    setReceiptDrafts((prev) => ({ ...prev, [index]: { ...(prev[index] ?? { amount: 0, categoryId: "" }), ...patch } }));
+    setReceiptDrafts((prev) => ({ ...prev, [index]: { ...(prev[index] ?? {}), ...patch } }));
   };
 
   const closeReceipt = () => {
@@ -1280,7 +1297,13 @@ useEffect(() => {
   };
 
   const receiptItemName = (index: number) => receiptDrafts[index]?.name ?? parsedReceipt?.items[index]?.name ?? "";
-  const receiptItemAmount = (index: number) => receiptDrafts[index]?.amount ?? parsedReceipt?.items[index]?.total ?? 0;
+  // Сумма позиции: только явно отредактированное валидное значение,
+  // иначе — исходная стоимость из чека (мусор/NaN/пустое поле игнорируем)
+  const receiptItemAmount = (index: number) => {
+    const draftAmount = receiptDrafts[index]?.amount;
+    if (draftAmount !== undefined && Number.isFinite(draftAmount) && draftAmount > 0) return draftAmount;
+    return parsedReceipt?.items[index]?.total ?? 0;
+  };
   const receiptItemCategoryId = (index: number) => {
     const draftId = receiptDrafts[index]?.categoryId;
     if (draftId !== undefined) return draftId;
@@ -1331,7 +1354,7 @@ useEffect(() => {
 
       closeReceipt();
     } catch {
-      setReceiptError("Не удалось сохранить траты из чека");
+      setReceiptError(t("receiptSaveError"));
     }
   };
 
@@ -1343,7 +1366,7 @@ useEffect(() => {
     }
     telegram.onEvent("qrTextReceived", handleQrReceived);
     telegram.onEvent("scanQrPopupClosed", handleReceiptScanClosed);
-    telegram.showScanQrPopup({ text: "Отсканируйте QR на чеке" });
+    telegram.showScanQrPopup({ text: t("scanReceiptHint") });
   };
 
   // «Ввести вручную» — та же модалка траты, но без предвыбранной категории
@@ -1432,7 +1455,7 @@ useEffect(() => {
         console.error("Веб-сканер недоступен:", error);
         if (!cancelled) {
           setIsCameraScannerOpen(false);
-          setCardFormError("Не удалось открыть камеру. Разрешите доступ или введите код вручную.");
+          setCardFormError(t("cameraOpenError"));
         }
       }
     })();
@@ -1469,7 +1492,7 @@ useEffect(() => {
     if (telegram?.showScanQrPopup) {
       telegram.onEvent("qrTextReceived", handleCardCodeReceived);
       telegram.onEvent("scanQrPopupClosed", handleCardScanPopupClosed);
-      telegram.showScanQrPopup({ text: "Наведите на QR или штрих-код карты" });
+      telegram.showScanQrPopup({ text: t("scanCardHint") });
       return;
     }
     // Нативный сканер недоступен (обычный браузер) — сразу включаем веб-сканер
@@ -1507,21 +1530,37 @@ useEffect(() => {
       setCardCodeDraft("");
       setCardFormError(undefined);
     } catch {
-      setCardFormError("Не удалось сохранить карту");
+      setCardFormError(t("cardSaveError"));
     }
   };
 
   const removeLoyaltyCard = async (card: LoyaltyCard) => {
-    if (!window.confirm(`Удалить карту «${card.name}»?`)) return;
+    if (!window.confirm(t("confirmDeleteCard", { name: card.name }))) return;
     try {
       await deleteDoc(doc(db, "users", getUserId(), "loyalty_cards", card.id));
       setExpandedCard(undefined);
     } catch {
-      setError("Не удалось удалить карту");
+      setError(t("cardDeleteError"));
     }
   };
 
   const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal || isReceiptLoading || parsedReceipt || showCardForm || expandedCard;
+
+  // Кнопка переключения языка (RU ⇄ EN) — общий элемент шапки
+  const langToggle = (
+    <button
+      type="button"
+      className="lang-toggle"
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleLang();
+      }}
+      aria-label={t("langAria")}
+      title={t("langAria")}
+    >
+      {lang === "ru" ? "RU" : "EN"}
+    </button>
+  );
 
   return (
     <main
@@ -1537,7 +1576,7 @@ useEffect(() => {
           <>
             <div className="month-control">
               <button className="month-picker" onClick={(e) => { e.stopPropagation(); setShowMonthPicker((v) => !v); }}>
-                <span>{selectedYear} год</span>
+                <span>{t("yearLabel", { year: selectedYear })}</span>
               </button>
               {showMonthPicker && (
                 <div className="month-menu" style={{ gridTemplateColumns: "1fr" }} onClick={(e) => e.stopPropagation()}>
@@ -1549,13 +1588,16 @@ useEffect(() => {
                 </div>
               )}
             </div>
-            <div className="avatar">{user?.first_name?.slice(0, 1) ?? "S"}</div>
+            <div className="header-actions">
+              {langToggle}
+              <div className="avatar">{user?.first_name?.slice(0, 1) ?? "S"}</div>
+            </div>
           </>
         ) : (
           <>
             <div className="month-control">
               <button className="month-picker" onClick={(e) => { e.stopPropagation(); setShowMonthPicker((v) => !v); }}>
-                <span>{formatMonth(selectedMonth)}</span>
+                <span>{formatMonth(selectedMonth, lang)}</span>
               </button>
               {showMonthPicker && (
                 <div className="month-menu" onClick={(e) => e.stopPropagation()}>
@@ -1574,8 +1616,11 @@ useEffect(() => {
                 </div>
               )}
             </div>
-            <div className="month-total">
-              <b>{formatMoney(filteredTotalSpent)}</b>
+            <div className="header-actions">
+              {langToggle}
+              <div className="month-total">
+                <b>{formatMoney(filteredTotalSpent)}</b>
+              </div>
             </div>
           </>
         )}
@@ -1585,7 +1630,7 @@ useEffect(() => {
 
       {activeTab === "expenses" && (
         <>
-          <div className="section-title"><h2>Последние траты</h2></div>
+          <div className="section-title"><h2>{t("recentExpenses")}</h2></div>
           {editingExpense && (() => {
             const initialDateTime = toLocalDateTime(editingExpense.createdAt);
             return (
@@ -1598,12 +1643,12 @@ useEffect(() => {
                 }}
               >
                 <form className="expense-modal expense-modal--plain" onSubmit={updateExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                  <input name="amount" type="text" inputMode="numeric" defaultValue={String(editingExpense.amount)} placeholder="Amount" required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
-                  <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder="Description" />
+                  <input name="amount" type="text" inputMode="numeric" defaultValue={String(editingExpense.amount)} placeholder={t("amountPlaceholder")} required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <input name="description" maxLength={300} defaultValue={editingExpense.description ?? ""} placeholder={t("description")} />
                   <div className="select-wrapper">
                     <select name="categoryId" defaultValue={editingExpense.category?.id ?? ""}>
-                      <option value="">No category</option>
-                      {dashboard?.categories.map((category) => (
+                      <option value="">{t("categoryOther")}</option>
+                      {sortedCategories.map((category) => (
                         <option key={category.id} value={category.id}>{category.name}</option>
                       ))}
                     </select>
@@ -1613,8 +1658,8 @@ useEffect(() => {
                     <input name="time" type="time" defaultValue={initialDateTime.time} required />
                   </div>
                   <div className="button-row">
-                    <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
-                    <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteExpense}>Удалить</button>
+                    <button type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : t("save")}</button>
+                    <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteExpense}>{t("delete")}</button>
                   </div>
                 </form>
               </div>
@@ -1624,7 +1669,7 @@ useEffect(() => {
           <div className="accordion-list">
             <div className="accordion-item">
                   <button className={`accordion-trigger ${expandedAccId.has("all") ? "inactive" : ""}`} onClick={() => toggleAccordion("all")}>
-                    <span>All expenses</span>
+                    <span>{t("allExpenses")}</span>
                     <div className="accordion-right">
                       <b>{formatMoney(filteredTotalSpent)}</b>
                       <Icon name="arrow" />
@@ -1633,7 +1678,7 @@ useEffect(() => {
                   {expandedAccId.has("all") && (
                     <div className="accordion-content list-card">
                       {filteredExpenses.map((ex) => (
-                        <ExpenseRow key={ex.id} expense={ex} onLongPress={() => setEditingExpense(ex)} />
+                        <ExpenseRow key={ex.id} expense={ex} lang={lang} t={t} onLongPress={() => setEditingExpense(ex)} />
                       ))}
                     </div>
                   )}
@@ -1644,13 +1689,13 @@ useEffect(() => {
               const total = expenses.reduce((sum, e) => sum + e.amount, 0);
               // Тот же цвет, что у плашки на «Графике» и у сектора диаграммы
               const categoryColor =
-                categoryColorById.get(catId) ?? getCategoryColor(category?.name ?? "Без категории");
+                categoryColorById.get(catId) ?? getCategoryColor(category?.name ?? t("categoryOther"));
               return (
                 <div className="accordion-item accordion-item--category" key={catId} style={{ background: categoryColor.bg }}>
                   <button className={`accordion-trigger ${expandedAccId.has(catId) ? "active" : ""}`} onClick={() => toggleAccordion(catId)}>
                     <div className="accordion-left">
                       <span className="mini-icon">{category?.icon ? <Icon name={category.icon} /> : "•"}</span>
-                      <span>{category?.name ?? "Без категории"}</span>
+                      <span>{category?.name ?? t("categoryOther")}</span>
                     </div>
                     <div className="accordion-right">
                       <b>{formatMoney(total)}</b>
@@ -1660,7 +1705,7 @@ useEffect(() => {
                   {expandedAccId.has(catId) && (
                     <div className="accordion-content list-card">
                       {expenses.map((ex) => (
-                        <ExpenseRow key={ex.id} expense={ex} onLongPress={() => setEditingExpense(ex)} />
+                        <ExpenseRow key={ex.id} expense={ex} lang={lang} t={t} onLongPress={() => setEditingExpense(ex)} />
                       ))}
                     </div>
                   )}
@@ -1668,7 +1713,7 @@ useEffect(() => {
               );
             })}
           </div>
-          {!filteredExpenses.length && <p className="empty">В этом месяце трат нет.</p>}
+          {!filteredExpenses.length && <p className="empty">{t("noExpensesMonth")}</p>}
         </>
       )}
 
@@ -1683,16 +1728,16 @@ useEffect(() => {
               }}
             >
               <form className="expense-modal expense-modal--plain" onSubmit={updateCategory} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder="Category name" required autoFocus />
+                <input name="categoryName" maxLength={50} defaultValue={editingCategory.name} placeholder={t("categoryName")} required autoFocus />
                 
                 <div className="budget-icon-row">
-                  <input name="budget" type="text" inputMode="numeric" defaultValue={String(editingCategory.budgets?.[selectedMonth] || "")} placeholder="Planned" />
+                  <input name="budget" type="text" inputMode="numeric" defaultValue={String(editingCategory.budgets?.[selectedMonth] || "")} placeholder={t("planned")} />
 
                   <div className="icon-dropdown">
                     <input type="hidden" name="categoryIcon" value={categoryIconValue} />
                     <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
                       <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
-                      <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Other"}</span>
+                      <span className="icon-dropdown-label">{iconLabel(categoryIconValue)}</span>
                       <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                     </button>
                     {iconPickerOpen && (
@@ -1714,23 +1759,23 @@ useEffect(() => {
                   </div>
                 </div>
                 <div className="button-row">
-                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Save"}</button>
-                  <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteCategory}>Delete</button>
+                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : t("save")}</button>
+                  <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteCategory}>{t("delete")}</button>
                 </div>
               </form>
             </div>
           ) : showCategoryForm ? (
             <div className="modal-backdrop" onClick={() => setShowCategoryForm(false)}>
               <form className="expense-modal expense-modal--plain" onSubmit={addCategory} onClick={(e) => e.stopPropagation()}>
-                <input name="categoryName" maxLength={50} placeholder="Category name" required autoFocus />
+                <input name="categoryName" maxLength={50} placeholder={t("categoryName")} required autoFocus />
                 <div className="budget-icon-row">
-                  <input name="budget" type="text" inputMode="numeric" placeholder="Planned" onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <input name="budget" type="text" inputMode="numeric" placeholder={t("planned")} onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
 
                   <div className="icon-dropdown">
                     <input type="hidden" name="categoryIcon" value={categoryIconValue} />
                     <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
                       <span className="icon-dropdown-icon"><Icon name={categoryIconValue} /></span>
-                      <span className="icon-dropdown-label">{ICON_LABELS[categoryIconValue] ?? "Other"}</span>
+                      <span className="icon-dropdown-label">{iconLabel(categoryIconValue)}</span>
                       <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                     </button>
                     {iconPickerOpen && (
@@ -1751,7 +1796,7 @@ useEffect(() => {
                     )}
                   </div>
                 </div>
-                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Creating" : "Create"}</button>
+                <button type="submit" disabled={isSubmitting}>{isSubmitting ? t("creating") : t("create")}</button>
               </form>
             </div>
           ) : null}
@@ -1785,7 +1830,7 @@ useEffect(() => {
               </div>
             </div>
             {/* Легенды нет — суммы и цвета категорий показывает сетка ниже */}
-            {categoryStats.length === 0 && <p className="empty">Data will appear after adding expenses.</p>}
+            {categoryStats.length === 0 && <p className="empty">{t("noDataYet")}</p>}
           </section>
 
           {/* ===== Скроллируемая часть: сетка категорий под графиком ===== */}
@@ -1832,7 +1877,7 @@ useEffect(() => {
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
                     <small>{formatMoney(categoryStat?.amount ?? 0)}</small>
                     {category.budgets?.[selectedMonth] && (
-                      <small style={{ fontSize: '9px', opacity: 0.8 }}>from {formatMoney(category.budgets[selectedMonth])}</small>
+                      <small style={{ fontSize: '9px', opacity: 0.8 }}>{t("budgetFrom", { amount: formatMoney(category.budgets[selectedMonth]) })}</small>
                     )}
                   </div>
                 </button>
@@ -1849,7 +1894,7 @@ useEffect(() => {
                 }}
               >
                 <span><Icon name="plus" /></span>
-                <b>Add</b>
+                <b>{t("add")}</b>
                 <small style={{ fontSize: '9px' }}>{'\u00A0'}</small>
               </button>
             </div>
@@ -1869,14 +1914,14 @@ useEffect(() => {
               }}
             >
               <form className="expense-modal expense-modal--plain" onSubmit={updateGoal} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                <input name="goalName" maxLength={50} defaultValue={editingGoal.name} placeholder="Название цели" required autoFocus />
+                <input name="goalName" maxLength={50} defaultValue={editingGoal.name} placeholder={t("goalName")} required autoFocus />
                 <div className="budget-icon-row">
-                  <input name="targetAmount" type="text" inputMode="numeric" defaultValue={String(editingGoal.targetAmount)} placeholder="Целевая сумма" required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <input name="targetAmount" type="text" inputMode="numeric" defaultValue={String(editingGoal.targetAmount)} placeholder={t("goalTarget")} required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
                   <div className="icon-dropdown">
                     <input type="hidden" name="goalIcon" value={goalIconValue} />
                     <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
                       <span className="icon-dropdown-icon"><Icon name={goalIconValue} /></span>
-                      <span className="icon-dropdown-label">{ICON_LABELS[goalIconValue] ?? "Цель"}</span>
+                      <span className="icon-dropdown-label">{iconLabel(goalIconValue)}</span>
                       <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                     </button>
                     {iconPickerOpen && (
@@ -1896,22 +1941,22 @@ useEffect(() => {
                   </div>
                 </div>
                 <div className="button-row">
-                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
-                  <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteGoal}>Удалить</button>
+                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : t("save")}</button>
+                  <button type="button" className="danger-button" disabled={isSubmitting} onClick={deleteGoal}>{t("delete")}</button>
                 </div>
               </form>
             </div>
           ) : showGoalForm ? (
             <div className="modal-backdrop" onClick={() => setShowGoalForm(false)}>
               <form className="expense-modal expense-modal--plain" onSubmit={addGoal} onClick={(e) => e.stopPropagation()}>
-                <input name="goalName" maxLength={50} placeholder="Название цели" required autoFocus />
+                <input name="goalName" maxLength={50} placeholder={t("goalName")} required autoFocus />
                 <div className="budget-icon-row">
-                  <input name="targetAmount" type="text" inputMode="numeric" placeholder="Целевая сумма" required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                  <input name="targetAmount" type="text" inputMode="numeric" placeholder={t("goalTarget")} required onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
                   <div className="icon-dropdown">
                     <input type="hidden" name="goalIcon" value={goalIconValue} />
                     <button type="button" className="icon-dropdown-trigger" onClick={(e) => { e.stopPropagation(); setIconPickerOpen((o) => !o); }}>
                       <span className="icon-dropdown-icon"><Icon name={goalIconValue} /></span>
-                      <span className="icon-dropdown-label">{ICON_LABELS[goalIconValue] ?? "Цель"}</span>
+                      <span className="icon-dropdown-label">{iconLabel(goalIconValue)}</span>
                       <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                     </button>
                     {iconPickerOpen && (
@@ -1930,7 +1975,7 @@ useEffect(() => {
                     )}
                   </div>
                 </div>
-                <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Создаю…" : "Создать цель"}</button>
+                <button type="submit" disabled={isSubmitting}>{isSubmitting ? t("creating") : t("createGoal")}</button>
               </form>
             </div>
           ) : goalTopUpGoal && goalOperationType ? (
@@ -1948,12 +1993,12 @@ useEffect(() => {
                   <span className="goal-topup-icon"><Icon name={goalTopUpGoal.icon || "goal"} /></span>
                   <div>
                     <b>{goalTopUpGoal.name}</b>
-                    <small>{formatMoney(goalTopUpGoal.savedAmount)} из {formatMoney(goalTopUpGoal.targetAmount)}</small>
+                    <small>{formatMoney(goalTopUpGoal.savedAmount)} {t("goalOf")} {formatMoney(goalTopUpGoal.targetAmount)}</small>
                   </div>
                 </div>
-                <input name="topUpAmount" type="text" inputMode="numeric" placeholder="Сумма" required autoFocus onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+                <input name="topUpAmount" type="text" inputMode="numeric" placeholder={t("amountLabel")} required autoFocus onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
                 <div className="button-row">
-                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Сохраняю…" : "Сохранить"}</button>
+                  <button type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : t("save")}</button>
                 </div>
               </form>
             </div>
@@ -1962,9 +2007,9 @@ useEffect(() => {
           {(dashboard?.savingsGoals?.length ?? 0) === 0 ? (
             <section className="savings-card">
               <span className="savings-icon"><Icon name="goal" /></span>
-              <h2>Создайте первую цель</h2>
-              <p>Например, отпуск, новый телефон или подушка безопасности.</p>
-              <button type="button" onClick={() => { setEditingGoal(undefined); setGoalIconValue("goal"); setIconPickerOpen(false); setShowGoalForm(true); }}>Добавить цель</button>
+              <h2>{t("firstGoalTitle")}</h2>
+              <p>{t("firstGoalSubtitle")}</p>
+              <button type="button" onClick={() => { setEditingGoal(undefined); setGoalIconValue("goal"); setIconPickerOpen(false); setShowGoalForm(true); }}>{t("addGoal")}</button>
             </section>
           ) : (
             <div className="goals-list">
@@ -1991,13 +2036,13 @@ useEffect(() => {
                         </div>
                         <div className="goal-card-amounts">
                           <small>{formatMoney(goal.savedAmount)}</small>
-                          <small>из {formatMoney(goal.targetAmount)}</small>
+                          <small>{t("goalOf")} {formatMoney(goal.targetAmount)}</small>
                         </div>
                       </div>
                     </button>
                     <div className="goal-card-actions">
-                      <button type="button" onClick={() => { setGoalTopUpGoal(goal); setGoalOperationType("add"); }}>Пополнить</button>
-                      <button type="button" className="goal-card-withdraw" onClick={() => { setGoalTopUpGoal(goal); setGoalOperationType("withdraw"); }}>Снять</button>
+                      <button type="button" onClick={() => { setGoalTopUpGoal(goal); setGoalOperationType("add"); }}>{t("topUp")}</button>
+                      <button type="button" className="goal-card-withdraw" onClick={() => { setGoalTopUpGoal(goal); setGoalOperationType("withdraw"); }}>{t("withdraw")}</button>
                     </div>
                   </div>
                 );
@@ -2012,7 +2057,7 @@ useEffect(() => {
                 }}
               >
                 <Icon name="plus" />
-                <span>Новая цель</span>
+                <span>{t("newGoal")}</span>
               </button>
             </div>
           )}
@@ -2024,9 +2069,9 @@ useEffect(() => {
           {loyaltyCards.length === 0 ? (
             <section className="savings-card">
               <span className="savings-icon"><Icon name="loyalty" /></span>
-              <h2>Карты лояльности</h2>
-              <p>Добавьте дисконтные карты магазинов — и показывайте код прямо с экрана на кассе.</p>
-              <button type="button" onClick={() => { setCardNameDraft(""); setCardCodeDraft(""); setCardFormError(undefined); setShowCardForm(true); }}>Добавить карту</button>
+              <h2>{t("loyaltyTitle")}</h2>
+              <p>{t("loyaltySubtitle")}</p>
+              <button type="button" onClick={() => { setCardNameDraft(""); setCardCodeDraft(""); setCardFormError(undefined); setShowCardForm(true); }}>{t("addCard")}</button>
             </section>
           ) : (
             <div className="cards-list">
@@ -2054,14 +2099,14 @@ useEffect(() => {
                 onClick={() => { setCardNameDraft(""); setCardCodeDraft(""); setCardFormError(undefined); setShowCardForm(true); }}
               >
                 <Icon name="plus" />
-                <span>Добавить карту</span>
+                <span>{t("addCard")}</span>
               </button>
             </div>
           )}
         </>
       )}
 
-      <nav className={`floating-tab-bar${isModalOpen ? " tab-bar-hidden" : ""}`} aria-label="Основная навигация">
+      <nav className={`floating-tab-bar${isModalOpen ? " tab-bar-hidden" : ""}`} aria-label={t("navAria")}>
         {/* SVG-фон бара: скруглённые края + плавная выемка (arc/curve) вокруг центральной FAB */}
         <svg className="tab-bar-shape" viewBox="0 0 390 64" preserveAspectRatio="none" aria-hidden="true">
           <path
@@ -2089,7 +2134,7 @@ useEffect(() => {
           }}
         >
           <Icon name="chart" />
-          <span>График</span>
+          <span>{t("tabChart")}</span>
         </button>
         <button
           type="button"
@@ -2100,12 +2145,12 @@ useEffect(() => {
           }}
         >
           <Icon name="card" />
-          <span>Траты</span>
+          <span>{t("tabExpenses")}</span>
         </button>
         <button
           type="button"
           className="fab-button"
-          aria-label="Добавить"
+          aria-label={t("addAria")}
           onClick={openAddMenu}
         />
         <button
@@ -2117,7 +2162,7 @@ useEffect(() => {
           }}
         >
           <Icon name="loyalty" />
-          <span>Карты</span>
+          <span>{t("tabCards")}</span>
         </button>
         <button
           type="button"
@@ -2128,7 +2173,7 @@ useEffect(() => {
           }}
         >
           <Icon name="goal" />
-          <span>Накопления</span>
+          <span>{t("tabSavings")}</span>
         </button>
       </nav>
 
@@ -2144,21 +2189,22 @@ useEffect(() => {
         >
           <form className="expense-modal expense-modal--plain" onSubmit={addExpense} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
             <div className="input-with-operators">
-              <input name="amount" type="text" inputMode="numeric" placeholder="Amount" required ref={amountInputRef} onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
+              <input name="amount" type="text" inputMode="numeric" placeholder={t("amountPlaceholder")} required ref={amountInputRef} onFocus={(e) => { operatorInputRef.current = e.currentTarget; }} />
               <div className="operator-bar">
                 {["+", "-", "*", "/"].map((op) => (
                   <button key={op} type="button" className="operator-btn" onClick={() => insertOperator(op)}>{op === "*" ? "×" : op === "/" ? "÷" : op}</button>
                 ))}
               </div>
             </div>
+            {/* Категории — по алфавиту; «Остальное» (пустое значение) — позиция без категории */}
             <select name="categoryId" value={expenseCategory?.id ?? ""} onChange={(e) => setExpenseCategory(e.target.value === "" ? MANUAL_NO_CATEGORY : (dashboard?.categories.find((c) => c.id === e.target.value) ?? MANUAL_NO_CATEGORY))}>
-              <option value="">Без категории</option>
-              {dashboard?.categories.map((category) => (
+              <option value="">{t("categoryOther")}</option>
+              {sortedCategories.map((category) => (
                 <option key={category.id} value={category.id}>{category.name}</option>
               ))}
             </select>
-            <input name="description" maxLength={300} placeholder="Description" />
-            <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving…" : "Save"}</button>
+            <input name="description" maxLength={300} placeholder={t("description")} />
+            <button type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : t("save")}</button>
           </form>
         </div>
       )}
@@ -2168,8 +2214,8 @@ useEffect(() => {
         <div className="modal-backdrop receipt-backdrop">
           <div className="receipt-loader">
             <span className="receipt-spinner" />
-            <p>Распознаём чек…</p>
-            <small>Это займёт несколько секунд</small>
+            <p>{t("receiptParsing")}</p>
+            <small>{t("receiptParsingHint")}</small>
           </div>
         </div>
       )}
@@ -2179,7 +2225,7 @@ useEffect(() => {
         <div className="modal-backdrop" onClick={() => setReceiptError(undefined)}>
           <div className="expense-modal expense-modal--plain" onClick={(e) => e.stopPropagation()}>
             <p className="receipt-error-text">{receiptError}</p>
-            <button type="button" onClick={() => setReceiptError(undefined)}>Понятно</button>
+            <button type="button" onClick={() => setReceiptError(undefined)}>{t("okGotIt")}</button>
           </div>
         </div>
       )}
@@ -2199,9 +2245,9 @@ useEffect(() => {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="receipt-modal-header">
-              <b>Чек</b>
+              <b>{t("receiptTitle")}</b>
               {parsedReceipt.dateTime && <span className="receipt-date">🗓 {parsedReceipt.dateTime}</span>}
-              <small>Отметьте нужные позиции, поправьте суммы и категории</small>
+              <small>{t("receiptHint")}</small>
             </div>
 
             <div className="receipt-items">
@@ -2217,7 +2263,7 @@ useEffect(() => {
                         defaultValue={item.name}
                         onChange={(e) => setReceiptDraft(index, { name: e.target.value })}
                         onFocus={(e) => { operatorInputRef.current = e.currentTarget; }}
-                        aria-label={`Название позиции ${item.name}`}
+                        aria-label={t("itemNameAria", { name: item.name })}
                       />
                       <small className="receipt-item-qty">{item.qty} × {formatMoney(item.price)}</small>
                       {/* Стоимость + категория — в одну строку */}
@@ -2230,23 +2276,25 @@ useEffect(() => {
                           onFocus={(e) => { operatorInputRef.current = e.currentTarget; }}
                           onChange={(e) => setReceiptDraft(index, { amount: evaluateExpression(e.target.value) })}
                           placeholder={String(item.total)}
-                          aria-label={`Сумма позиции ${item.name}`}
+                          aria-label={t("itemAmountAria", { name: item.name })}
                         />
                         <select
                           value={receiptItemCategoryId(index)}
                           onChange={(e) => {
+                            // Ручной выбор категории меняет ТОЛЬКО привязку категории
+                            // позиции: сумма позиции и итог чека не пересчитываются
                             setReceiptDraft(index, { categoryId: e.target.value });
-                            // Ручная смена категории — сразу обновляем кэш «товар -> категория»
+                            // Смена категории — сразу обновляем кэш «товар -> категория»
                             const selectedCategory = dashboard?.categories.find((c) => c.id === e.target.value);
                             if (selectedCategory) {
                               const key = normalizeItemName(item.name);
                               if (key) void writeItemCategoryCache(getUserId(), { [key]: selectedCategory.name });
                             }
                           }}
-                          aria-label={`Категория позиции ${item.name}`}
+                          aria-label={t("itemCategoryAria", { name: item.name })}
                         >
-                          <option value="">Без категории</option>
-                          {dashboard?.categories.map((category) => (
+                          <option value="">{t("categoryOther")}</option>
+                          {sortedCategories.map((category) => (
                             <option key={category.id} value={category.id}>{category.name}</option>
                           ))}
                         </select>
@@ -2256,20 +2304,20 @@ useEffect(() => {
                 );
               })}
               {parsedReceipt.items.length === 0 && (
-                <p className="empty">В чеке не найдено позиций.</p>
+                <p className="empty">{t("noReceiptItems")}</p>
               )}
             </div>
 
             <div className="receipt-total">
-              <span>Итого</span>
+              <span>{t("total")}</span>
               <b>{formatMoney(parsedReceipt.items.reduce((sum, _, index) => sum + (receiptItemAmount(index) || 0), 0))}</b>
             </div>
 
             <div className="button-row">
               <button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "Сохраняю…" : "Сохранить"}
+                {isSubmitting ? t("saving") : t("save")}
               </button>
-              <button type="button" className="danger-button" onClick={closeReceipt}>Отмена</button>
+              <button type="button" className="danger-button" onClick={closeReceipt}>{t("cancel")}</button>
             </div>
           </form>
         </div>
@@ -2286,7 +2334,7 @@ useEffect(() => {
             <input
               name="cardName"
               maxLength={60}
-              placeholder="Название магазина"
+              placeholder={t("cardNamePlaceholder")}
               required
               autoFocus
               value={cardNameDraft}
@@ -2297,38 +2345,38 @@ useEffect(() => {
               <input
                 name="cardCode"
                 maxLength={100}
-                placeholder="Штрих-код / QR (числа или текст)"
+                placeholder={t("cardCodePlaceholder")}
                 required
                 value={cardCodeDraft}
                 onChange={(e) => { setCardCodeDraft(e.target.value); setCardFormError(undefined); }}
                 onFocus={(e) => { operatorInputRef.current = e.currentTarget; scrollFieldIntoView(e); }}
               />
-              <button type="button" className="card-scan-button" onClick={startCardCodeScan} aria-label="Сканировать код карты">
+              <button type="button" className="card-scan-button" onClick={startCardCodeScan} aria-label={t("scanCardHint")}>
                 <Icon name="loyalty" />
               </button>
             </div>
             <select name="cardFormat" defaultValue="auto" onFocus={scrollFieldIntoView}>
-              <option value="auto">Формат: определить автоматически</option>
-              <option value="barcode">Штрих-код (Code128 / EAN-13)</option>
-              <option value="qr">QR-код</option>
+              <option value="auto">{t("formatAuto")}</option>
+              <option value="barcode">{t("formatBarcode")}</option>
+              <option value="qr">{t("formatQr")}</option>
             </select>
             {isCameraScannerOpen && (
               <div className="card-scanner-box">
                 <div id="card-scanner-region" />
-                <p className="card-scanner-hint">Наведите камеру на штрих-код или QR-код карты</p>
+                <p className="card-scanner-hint">{t("cameraHint")}</p>
                 <button
                   type="button"
                   className="card-scanner-stop"
                   onClick={() => void closeCameraScanner()}
                 >
-                  Остановить камеру
+                  {t("stopCamera")}
                 </button>
               </div>
             )}
             {cardFormError && <p className="receipt-error-text">{cardFormError}</p>}
             <div className="button-row">
-              <button type="submit" disabled={isSubmitting}>Сохранить карту</button>
-              <button type="button" className="danger-button" onClick={() => setShowCardForm(false)}>Отмена</button>
+              <button type="submit" disabled={isSubmitting}>{t("saveCard")}</button>
+              <button type="button" className="danger-button" onClick={() => setShowCardForm(false)}>{t("cancel")}</button>
             </div>
           </form>
         </div>
@@ -2346,11 +2394,11 @@ useEffect(() => {
             <b>{expandedCard.name}</b>
             <small className="loyalty-fullscreen-code">{shortCardCode(expandedCard.code, 44)}</small>
             <div className="loyalty-codes">
-              <CardCodeView key={expandedCard.id} card={expandedCard} />
+              <CardCodeView key={expandedCard.id} card={expandedCard} t={t} />
             </div>
             <div className="button-row">
-              <button type="button" onClick={() => setExpandedCard(undefined)}>Свернуть</button>
-              <button type="button" className="danger-button" onClick={() => void removeLoyaltyCard(expandedCard)}>Удалить</button>
+              <button type="button" onClick={() => setExpandedCard(undefined)}>{t("collapse")}</button>
+              <button type="button" className="danger-button" onClick={() => void removeLoyaltyCard(expandedCard)}>{t("delete")}</button>
             </div>
           </div>
         </div>
@@ -2367,7 +2415,7 @@ useEffect(() => {
           <div
             className="add-menu-sheet"
             role="dialog"
-            aria-label="Добавить трату"
+            aria-label={t("addExpenseAria")}
             onTouchStart={onSheetTouchStart}
             onTouchMove={onSheetTouchMove}
             onTouchEnd={onSheetTouchEnd}
@@ -2379,14 +2427,14 @@ useEffect(() => {
               className="add-menu-item"
               onClick={startQrScan}
             >
-              Сканировать QR-код чека
+              {t("scanReceipt")}
             </button>
             <button
               type="button"
               className="add-menu-item"
               onClick={openManualExpense}
             >
-              Ввести вручную
+              {t("manualEntry")}
             </button>
           </div>
         </div>

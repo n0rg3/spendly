@@ -79,6 +79,35 @@ h2 { margin-bottom: 0; font-size: 19px; letter-spacing: -.25px; }
   font-weight: 800;
 }
 
+/* ===== Правая группа шапки: переключатель языка + аватар/итог месяца ===== */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Переключатель языка (RU ⇄ EN): компактная «пилюля» в стиле UI-кита —
+   скругление, полупрозрачный фон и blur как у главных кнопок */
+.lang-toggle {
+  min-width: 44px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  color: var(--hint-color);
+  background: color-mix(in srgb, var(--secondary-bg-color) 75%, transparent);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.lang-toggle:active {
+  color: var(--text-color);
+  background: color-mix(in srgb, var(--secondary-bg-color) 95%, transparent);
+}
+
 .hero-card {
   padding: 22px;
   border-radius: 24px;
@@ -1323,42 +1352,76 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   text-align: center;
 }
 
+/* ===== Кнопки «Свернуть» / «Удалить» в модалке кода карты =====
+   Единый UI-кит приложения: rounded-xl, полупрозрачные фоны и blur,
+   как у главных кнопок (.add-menu-item и т.п.).
+   Базовые правила .expense-modal button здесь не действуют —
+   модалка не внутри .expense-modal, поэтому задаём всё явно */
+.loyalty-fullscreen .button-row button {
+  min-height: 48px;
+  border-radius: 14px; /* rounded-xl */
+  font-weight: 590;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--button-color);
+  background: color-mix(in srgb, var(--secondary-bg-color) 94%, transparent);
+  backdrop-filter: blur(25px) saturate(180%);
+  -webkit-backdrop-filter: blur(25px) saturate(180%);
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.loyalty-fullscreen .button-row button:active {
+  background: color-mix(in srgb, var(--secondary-bg-color) 70%, var(--border-color));
+}
+
+.loyalty-fullscreen .button-row button.danger-button {
+  color: #e53935;
+  background: color-mix(in srgb, #e53935 12%, transparent);
+}
+
+.loyalty-fullscreen .button-row button.danger-button:active {
+  background: color-mix(in srgb, #e53935 22%, transparent);
+}
+
 /* Центрирующая обёртка кода карты в полноэкранном режиме.
-   max-width: 280px ограничивает ширину белой плашки — штрихкод растягивается
-   до неё, а QR (200px) занимает ~70% этой ширины */
+   Без узких лимитов по ширине: штрихкод растягивается почти
+   во всю ширину модального окна (см. .loyalty-code-box) */
 .loyalty-codes {
   display: flex;
   justify-content: center;
   width: 100%;
-  max-width: 280px;
+  max-width: 100%;
 }
 
 /* Белая плашка штрихкода: эквивалент
-   w-full bg-white p-6 rounded-2xl flex items-center justify-center min-h-[110px] overflow-hidden.
+   w-[95%] max-w-full bg-white p-6 rounded-2xl flex items-center justify-center min-h-[110px] overflow-hidden.
    Сплошное белое поле по краям критично для сканеров на кассе */
 .loyalty-code-box {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  width: 95%;            /* w-[95%] — почти во всю ширину модалки */
+  max-width: 100%;       /* без узких ограничений по ширине */
   min-width: 0;
   overflow: hidden;
-  padding: 24px 16px;    /* py-6 px-4 */
+  padding: 24px 12px;    /* компактные боковые поля, тихая зона для сканера */
   background: #ffffff;  /* bg-white */
   border-radius: 16px;  /* rounded-2xl */
   min-height: 110px;    /* min-h-[110px] */
 }
 
-/* Штрихкод SVG: адаптивно занимает 90% ширины контейнера, но не больше 300px.
-   Height auto сохраняет пропорции из viewBox (width 2.2 / height 55 = аккуратный
-   код с плотными штрихами, как на референсе Maxi) */
+/* Штрихкод SVG: растягивается на всю ширину плашки (height auto сохраняет
+   пропорции из viewBox — width 2.2 / height 55 = плотные штрихи, как на
+   референсе Maxi). Узкие лимиты max-w-[260px]/[300px] убраны */
 .loyalty-code-box svg,
 .loyalty-code-box canvas {
   display: block;
-  width: 90%;            /* w-[90%] */
-  max-width: 300px;      /* max-w-[300px] */
-  height: auto;          /* h-auto */
-  object-fit: contain;   /* object-contain */
+  width: 100%;          /* штрихкод во всю ширину белой плашки */
+  max-width: 100%;      /* w-full max-w-full */
+  height: auto;         /* h-auto */
+  object-fit: contain;  /* object-contain */
 }
 
 /* Глобальное правило `svg { fill: none; stroke: currentColor; stroke-width: 1.9 }`
