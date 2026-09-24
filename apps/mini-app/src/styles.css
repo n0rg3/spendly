@@ -66,48 +66,6 @@ h1, h2, p { margin-top: 0; }
 h1 { margin-bottom: 0; font-size: 32px; letter-spacing: -.8px; }
 h2 { margin-bottom: 0; font-size: 19px; letter-spacing: -.25px; }
 
-.avatar {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border: 3px solid var(--secondary-bg-color);
-  border-radius: 50%;
-  color: #fff;
-  background: linear-gradient(145deg, #7d8bff, #5263dc);
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-color) 25%, transparent);
-  font-weight: 800;
-}
-
-/* ===== Правая группа шапки: переключатель языка + аватар/итог месяца ===== */
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-/* Переключатель языка (RU ⇄ EN): компактная «пилюля» в стиле UI-кита —
-   скругление, полупрозрачный фон и blur как у главных кнопок */
-.lang-toggle {
-  min-width: 44px;
-  height: 32px;
-  padding: 0 10px;
-  border-radius: 12px;
-  border: 1px solid var(--border-color);
-  color: var(--hint-color);
-  background: color-mix(in srgb, var(--secondary-bg-color) 75%, transparent);
-  backdrop-filter: blur(12px) saturate(160%);
-  -webkit-backdrop-filter: blur(12px) saturate(160%);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
-.lang-toggle:active {
-  color: var(--text-color);
-  background: color-mix(in srgb, var(--secondary-bg-color) 95%, transparent);
-}
-
 .hero-card {
   padding: 22px;
   border-radius: 24px;
@@ -159,8 +117,8 @@ small { color: var(--hint-color); font-size: 12px; }
   height: 40px;
   place-items: center;
   border-radius: 13px;
-  color: var(--button-color);
-  background: color-mix(in srgb, var(--button-color) 12%, transparent);
+  color: var(--hint-color);
+  background: transparent;
   font-weight: 800;
 }
 
@@ -726,7 +684,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
 .accordion-trigger .accordion-right svg { width: 16px; height: 16px; color: var(--hint-color); transition: transform 0.2s ease; }
 .accordion-trigger.active .accordion-right svg { transform: rotate(90deg); }
 .accordion-content { border-top: 1px solid var(--border-color); border-radius: 0; box-shadow: none; }
-.mini-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; color: var(--button-color); background: color-mix(in srgb, var(--button-color) 12%, transparent); }
+.mini-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; color: inherit; background: transparent; }
 .mini-icon svg { width: 15px; height: 15px; }
 
 /* Плашки категорий на экране «Траты» больше не окрашиваются в цвет категории:

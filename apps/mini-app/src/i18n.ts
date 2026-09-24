@@ -1,9 +1,9 @@
 // apps/mini-app/src/i18n.ts
-// Лёгкая локализация интерфейса: словарь Русский / Английский.
-// Язык определяется автоматически (Telegram -> браузер), кэшируется
-// в localStorage и переключается кнопкой в шапке приложения.
+// Лёгкая локализация интерфейса: словари Русский / Английский / Сербский.
+// Язык определяется автоматически по настройкам Telegram (fallback — язык
+// браузера), переключателя в интерфейсе нет: ru → RU, en → EN, sr → SR.
 
-export type Lang = "ru" | "en";
+export type Lang = "ru" | "en" | "sr";
 
 type Dict = Record<string, string>;
 
@@ -32,7 +32,6 @@ const RU: Dict = {
   description: "Описание",
   amountLabel: "Сумма",
   yearLabel: "{year} год",
-  langAria: "Язык интерфейса",
   okGotIt: "Понятно",
   noDataYet: "Данные появятся после добавления трат.",
 
@@ -56,8 +55,10 @@ const RU: Dict = {
   categoryUpdateError: "Не удалось изменить категорию",
   categoryDeleteError: "Не удалось удалить категорию",
   confirmDeleteCategory: "Удалить категорию «{name}»?",
-};
 
+  // ===== График =====
+  monthShare: "{percent}% месяца",
+};
 
 // ===== Цели (RU) =====
 export const RU_GOALS: Dict = {
@@ -153,7 +154,6 @@ export const EN: Dict = {
   description: "Description",
   amountLabel: "Amount",
   yearLabel: "{year}",
-  langAria: "Interface language",
   okGotIt: "Got it",
   noDataYet: "Data will appear after adding expenses.",
 
@@ -175,6 +175,126 @@ export const EN: Dict = {
   categoryUpdateError: "Could not update the category",
   categoryDeleteError: "Could not delete the category",
   confirmDeleteCategory: "Delete category “{name}”?",
+  monthShare: "{percent}% of the month",
+};
+
+// ===== Основной словарь (SR) =====
+const SR: Dict = {
+  tabChart: "Grafikon",
+  tabExpenses: "Troškovi",
+  tabCards: "Kartice",
+  tabSavings: "Ušteđevine",
+  navAria: "Glavna navigacija",
+  addAria: "Dodaj",
+  addExpenseAria: "Dodaj trošak",
+
+  categoryOther: "Ostalo",
+  expenseFallback: "Trošak",
+  total: "Ukupno",
+  save: "Sačuvaj",
+  saving: "Čuvam…",
+  delete: "Obriši",
+  cancel: "Otkaži",
+  create: "Napravi",
+  creating: "Kreiram…",
+  add: "Dodaj",
+  amountPlaceholder: "Iznos",
+  description: "Opis",
+  amountLabel: "Iznos",
+  yearLabel: "{year}.",
+  okGotIt: "Razumem",
+  noDataYet: "Podaci će se pojaviti nakon dodavanja troškova.",
+
+  recentExpenses: "Nedavni troškovi",
+  allExpenses: "Svi troškovi",
+  noExpensesMonth: "U ovom mesecu nema troškova.",
+  expenseAddError: "Trošak nije dodat",
+  expenseUpdateError: "Trošak nije izmenjen",
+  expenseDeleteError: "Trošak nije obrisan",
+  confirmDeleteExpense: "Obrisati ovaj trošak?",
+  invalidDateTime: "Unesite ispravan datum i vreme",
+  invalidAmount: "Unesite ispravan iznos",
+  cloudError: "Greška pri povezivanju sa oblakom",
+
+  categoryName: "Naziv kategorije",
+  planned: "Planirano",
+  budgetFrom: "od {amount}",
+  categoryAddError: "Kategorija nije dodata",
+  categoryUpdateError: "Kategorija nije izmenjena",
+  categoryDeleteError: "Kategorija nije obrisana",
+  confirmDeleteCategory: "Obrisati kategoriju „{name}”?",
+
+  monthShare: "{percent}% meseca",
+};
+
+// ===== Цели (SR) =====
+export const SR_GOALS: Dict = {
+  goalName: "Naziv cilja",
+  goalTarget: "Ciljni iznos",
+  goalOf: "od",
+  createGoal: "Napravi cilj",
+  firstGoalTitle: "Napravite prvi cilj",
+  firstGoalSubtitle: "Na primer, odmor, novi telefon ili fond za hitne slučajeve.",
+  addGoal: "Dodaj cilj",
+  newGoal: "Novi cilj",
+  topUp: "Dopuni",
+  withdraw: "Povuci",
+  goalAddError: "Cilj nije kreiran",
+  goalUpdateError: "Cilj nije izmenjen",
+  goalDeleteError: "Cilj nije obrisan",
+  goalSaveError: "Cilj nije ažuriran",
+  confirmDeleteGoal: "Obrisati cilj „{name}”?",
+};
+
+// ===== Карты лояльности (SR) =====
+export const SR_CARDS: Dict = {
+  loyaltyTitle: "Kartice lojalnosti",
+  loyaltySubtitle: "Dodajte kartice lojalnosti prodavnica i prikaži kod direktno na kasi.",
+  addCard: "Dodaj karticu",
+  cardNoCode: "Kartica nema kod",
+  cardNamePlaceholder: "Naziv prodavnice",
+  cardCodePlaceholder: "Barkod / QR (brojevi ili tekst)",
+  formatAuto: "Format: automatski prepoznati",
+  formatBarcode: "Barkod (Code128 / EAN-13)",
+  formatQr: "QR kod",
+  cameraHint: "Usmerite kameru na barkod ili QR kod kartice",
+  stopCamera: "Zaustavi kameru",
+  saveCard: "Sačuvaj karticu",
+  editCard: "Izmeni",
+  colorLabel: "Boja",
+  customColor: "Prilagođena boja",
+  cardSaveError: "Kartica nije sačuvana",
+  cardDeleteError: "Kartica nije obrisana",
+  confirmDeleteCard: "Obrisati karticu „{name}”?",
+  scanCardHint: "Usmerite na QR ili barkod kartice",
+  cameraOpenError: "Kamera nije mogla da se otvori. Dozvolite pristup ili unesite kod ručno.",
+  scannerUnavailable: "QR skener nije dostupan: otvorite Mini App u Telegramu",
+  collapse: "Skupi",
+};
+
+// ===== Чек / сканер (SR) =====
+export const SR_RECEIPT: Dict = {
+  scanReceipt: "Skeniraj QR kod računa",
+  scanReceiptHint: "Skenirajte QR kod na računu",
+  manualEntry: "Unesi ručno",
+  receiptTitle: "Račun",
+  receiptHint: "Proverite stavke, iznose i kategorije",
+  receiptParsing: "Prepoznajem račun…",
+  receiptParsingHint: "Ovo će trajati nekoliko sekundi",
+  receiptLoadError: "Račun nije učitan",
+  receiptSaveError: "Stavke računa nisu sačuvane",
+  noReceiptItems: "Nema stavki na računu.",
+  itemNameAria: "Naziv stavke {name}",
+  itemAmountAria: "Iznos stavke {name}",
+  itemCategoryAria: "Kategorija stavke {name}",
+};
+
+// ===== API / инфраструктура (SR) =====
+export const SR_API: Dict = {
+  apiNotConfigured:
+    "API nije podešen: postavite VITE_API_URL (adresa serverless funkcije, npr. https://<project>.vercel.app) i ponovo izgradite aplikaciju",
+  apiPlaceholder: "API nije podešen: VITE_API_URL još sadrži rezervnu vrednost ({url})",
+  apiLocalhost: "Neispravan VITE_API_URL ({url}): localhost nije dostupan sa GitHub Pagesa",
 };
 
 // ===== Цели (EN) =====
@@ -250,35 +370,25 @@ export const EN_API: Dict = {
 export const STRINGS: Record<Lang, Dict> = {
   ru: { ...RU, ...RU_GOALS, ...RU_CARDS, ...RU_RECEIPT, ...RU_API },
   en: { ...EN, ...EN_GOALS, ...EN_CARDS, ...EN_RECEIPT, ...EN_API },
+  sr: { ...SR, ...SR_GOALS, ...SR_CARDS, ...SR_RECEIPT, ...SR_API },
 };
 
-const LANG_STORAGE_KEY = "spendly_lang";
-
-/** Определяет язык: сохранённый -> Telegram -> язык браузера -> русский. */
+/** Определяет язык по настройкам Telegram; вне Telegram — по языку браузера. */
 export function detectLang(): Lang {
-  try {
-    const stored = localStorage.getItem(LANG_STORAGE_KEY);
-    if (stored === "ru" || stored === "en") return stored;
-  } catch {
-    // localStorage недоступен — идём дальше по цепочке
-  }
-
-  const tgCode = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code;
+  const tgCode =
+    typeof window !== "undefined"
+      ? window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code
+      : undefined;
   const browserCode = typeof navigator !== "undefined" ? navigator.language : undefined;
   const code = (tgCode || browserCode || "ru").toLowerCase();
-  return code.startsWith("ru") ? "ru" : "en";
+
+  if (code.startsWith("ru")) return "ru";
+  if (code.startsWith("sr")) return "sr";
+  return "en";
 }
 
 export function loadLang(): Lang {
   return detectLang();
-}
-
-export function saveLang(lang: Lang): void {
-  try {
-    localStorage.setItem(LANG_STORAGE_KEY, lang);
-  } catch {
-    // без localStorage просто работаем на текущем языке
-  }
 }
 
 export type Translator = (key: string, vars?: Record<string, string | number>) => string;
@@ -297,7 +407,11 @@ export function makeT(lang: Lang): Translator {
 }
 
 /** Локаль для Intl (даты, деньги, сравнение строк). */
-export const intlLocale = (lang: Lang): string => (lang === "ru" ? "ru-RU" : "en-US");
+export const intlLocale = (lang: Lang): string => {
+  if (lang === "ru") return "ru-RU";
+  if (lang === "sr") return "sr-Latn-RS";
+  return "en-US";
+};
 
 /** Названия месяцев для пикера (с заглавной буквы, как в текущем UI). */
 export const MONTHS: Record<Lang, string[]> = {
@@ -308,6 +422,10 @@ export const MONTHS: Record<Lang, string[]> = {
   en: [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
+  ],
+  sr: [
+    "Januar", "Februar", "Mart", "April", "Maj", "Jun",
+    "Jul", "Avgust", "Septembar", "Oktobar", "Novembar", "Decembar",
   ],
 };
 
@@ -340,5 +458,19 @@ export const ICON_LABELS: Record<Lang, Record<string, string>> = {
     pizza: "Pizza", receipt: "Receipts", scissors: "Services", tools: "Tools",
     train: "Train", tv: "TV", umbrella: "Umbrella", wine: "Wine",
     wrench: "Repair", goal: "Goal",
+  },
+  sr: {
+    food: "Hrana", transport: "Prevoz", shopping: "Kupovina", ent: "Zabava",
+    health: "Zdravlje", home: "Dom", gift: "Pokloni", wallet: "Novčanik",
+    coffee: "Kafa", book: "Knjiga", movie: "Film", music: "Muzika",
+    phone: "Telefon", travel: "Putovanje", sport: "Sport", education: "Obrazovanje",
+    pet: "Kućni ljubimci", beauty: "Lepota", clothing: "Odeća", other: "Ostalo",
+    baby: "Deca", bank: "Banka", beer: "Alkohol", bike: "Bicikl",
+    bus: "Autobus", camera: "Fotografija", clapper: "Video", cloud: "Oblak",
+    coins: "Novčići", game: "Igrice", gas: "Gorivo", glasses: "Vid",
+    icecream: "Slatkiši", lamp: "Svetlo", leaf: "Priroda", paint: "Umetnost",
+    pizza: "Pizza", receipt: "Računi", scissors: "Usluge", tools: "Alati",
+    train: "Voz", tv: "TV", umbrella: "Kišobran", wine: "Vino",
+    wrench: "Popravke", goal: "Cilj",
   },
 };

@@ -13,7 +13,6 @@ import {
   intlLocale,
   loadLang,
   makeT,
-  saveLang,
   type Lang,
   type Translator,
 } from "./i18n";
@@ -169,30 +168,41 @@ function shortCardCode(code: string, max = 24): string {
 
 // Дефолтный дашборд для нового пользователя: названия стартовых категорий
 // зависят от языка интерфейса (существующие профили в Firestore не трогаем)
-const defaultDashboard = (lang: Lang): Dashboard => ({
-  categories: lang === "ru"
-    ? [
-        { id: "1", name: "Еда", icon: "food", color: "#3390ec" },
-        { id: "2", name: "Транспорт", icon: "transport", color: "#2cb074" },
-        { id: "3", name: "Покупки", icon: "shopping", color: "#f7a200" },
-      ]
-    : [
-        { id: "1", name: "Food", icon: "food", color: "#3390ec" },
-        { id: "2", name: "Transport", icon: "transport", color: "#2cb074" },
-        { id: "3", name: "Shopping", icon: "shopping", color: "#f7a200" },
-      ],
-  expenses: [],
-  totalSpent: 0,
-  userCreatedAt: new Date().toISOString(),
-  savingsGoals: [],
-});
+const defaultDashboard = (lang: Lang): Dashboard => {
+  const categories: Record<Lang, Array<{ id: string; name: string; icon: string; color: string }>> = {
+    ru: [
+      { id: "1", name: "Еда", icon: "food", color: "#3390ec" },
+      { id: "2", name: "Транспорт", icon: "transport", color: "#2cb074" },
+      { id: "3", name: "Покупки", icon: "shopping", color: "#f7a200" },
+    ],
+    en: [
+      { id: "1", name: "Food", icon: "food", color: "#3390ec" },
+      { id: "2", name: "Transport", icon: "transport", color: "#2cb074" },
+      { id: "3", name: "Shopping", icon: "shopping", color: "#f7a200" },
+    ],
+    sr: [
+      { id: "1", name: "Hrana", icon: "food", color: "#3390ec" },
+      { id: "2", name: "Prevoz", icon: "transport", color: "#2cb074" },
+      { id: "3", name: "Kupovina", icon: "shopping", color: "#f7a200" },
+    ],
+  };
+
+  return {
+    categories: categories[lang],
+    expenses: [],
+    totalSpent: 0,
+    userCreatedAt: new Date().toISOString(),
+    savingsGoals: [],
+  };
+};
 
 // Цвета категорий не хранятся константами: количество категорий динамическое,
 // палитра считается хэшем от названия — см. getCategoryColor в ./categoryColors
 
 // Псевдо-категория: модалка траты открыта вручную (без категории).
-// Совпадение всегда по id (""), а позиция без категории попадает в «Остальное»
-const MANUAL_NO_CATEGORY: Category = { id: "", name: "Остальное", icon: "other", color: null };
+// Совпадение всегда по id (""), а позиция без категории попадает в «Остальное».
+// Имя здесь служебное: пустая категория отображается через t("categoryOther").
+const MANUAL_NO_CATEGORY: Category = { id: "", name: "", icon: "other", color: null };
 
 function getUserId(): string {
   const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
@@ -333,7 +343,7 @@ const ICON_MAP: Record<string, keyof typeof LucideIcons> = {
 };
 
 const CATEGORY_ICONS = Object.keys(ICON_MAP).filter((key) => !["grid", "card", "chart", "goal", "plus", "arrow", "loyalty"].includes(key));
-// Подписи иконок локализованы в ./i18n (ICON_LABELS: { ru, en })
+// Подписи иконок локализованы в ./i18n (ICON_LABELS: { ru, en, sr })
 
 function Icon({ name }: { name: string }) {
   const iconName = ICON_MAP[name] || ICON_MAP.other;
@@ -356,8 +366,7 @@ function ExpenseRow({
   t: Translator;
   onLongPress: () => void;
 }) {
-  // Иконка строки траты остаётся нейтральной: цвет категории используется
-  // только для плашек категорий и секторов диаграммы (без перекрашивания иконок)
+  // Иконка строки траты наследует цвет текста категории, без цветной подложки.
   const { date, time } = useMemo(() => {
     const d = new Date(expense.createdAt);
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -500,7 +509,8 @@ function evaluateExpression(expression: string): number {
 function App() {
   const telegram = window.Telegram?.WebApp;
   const [dashboard, setDashboard] = useState<Dashboard>();
-  // Язык интерфейса: автоопределение (Telegram/браузер) + переключатель в шапке
+  // Язык интерфейса определяется автоматически по Telegram / браузеру.
+  // Состояние нужно для реактивного обновления при languageChanged.
   const [lang, setLang] = useState<Lang>(loadLang);
   const [activeTab, setActiveTab] = useState<Tab>("chart");
   const [error, setError] = useState<string>();
@@ -538,18 +548,20 @@ function App() {
   const operatorInputRef = useRef<HTMLInputElement | null>(null);
   const amountInputRef = useRef<HTMLInputElement | null>(null);
 
-  // ===== Локализация (RU / EN) =====
+  // ===== Локализация (RU / EN / SR) =====
   // t — переводчик; локальная обёртка formatMoney сохраняет имя функции,
   // чтобы не менять десятки мест вызова внутри компонента
   const t = useMemo(() => makeT(lang), [lang]);
   const formatMoney = (value: number) => formatMoneyWithLang(value, lang);
   const iconLabel = (icon: string) => ICON_LABELS[lang][icon] ?? ICON_LABELS.ru[icon] ?? "•";
-  const toggleLang = () =>
-    setLang((current) => {
-      const next: Lang = current === "ru" ? "en" : "ru";
-      saveLang(next);
-      return next;
-    });
+
+  // Если язык Telegram изменится в открытом Mini App, интерфейс обновится сам.
+  useEffect(() => {
+    if (!telegram) return;
+    const handleLanguageChanged = () => setLang(loadLang());
+    telegram.onEvent("languageChanged", handleLanguageChanged);
+    return () => telegram.offEvent("languageChanged", handleLanguageChanged);
+  }, [telegram]);
 
   // Сброс прокрутки страницы при открытии клавиатуры (предотвращает сдвиг окна вверх)
 // Сброс прокрутки страницы при открытии клавиатуры (предотвращает сдвиг окна вверх)
@@ -1116,7 +1128,6 @@ useEffect(() => {
       ? Math.round((selectedCategoryMeta.amount / chartTotal) * 100)
       : undefined;
 
-  const user = telegram?.initDataUnsafe?.user;
   // Категории в выпадающих списках и сетке — по алфавиту (учитывая язык интерфейса)
   const sortedCategories = [...(dashboard?.categories ?? [])].sort((left, right) =>
     left.name.localeCompare(right.name, intlLocale(lang))
@@ -1718,22 +1729,6 @@ useEffect(() => {
 
   const isModalOpen = editingExpense || editingCategory || showCategoryForm || expenseCategory || showGoalForm || editingGoal || goalTopUpGoal || isReceiptLoading || parsedReceipt || showCardForm || expandedCard;
 
-  // Кнопка переключения языка (RU ⇄ EN) — общий элемент шапки
-  const langToggle = (
-    <button
-      type="button"
-      className="lang-toggle"
-      onClick={(e) => {
-        e.stopPropagation();
-        toggleLang();
-      }}
-      aria-label={t("langAria")}
-      title={t("langAria")}
-    >
-      {lang === "ru" ? "RU" : "EN"}
-    </button>
-  );
-
   return (
     <main
       className={isModalOpen ? "modal-open" : ""}
@@ -1760,10 +1755,6 @@ useEffect(() => {
                 </div>
               )}
             </div>
-            <div className="header-actions">
-              {langToggle}
-              <div className="avatar">{user?.first_name?.slice(0, 1) ?? "S"}</div>
-            </div>
           </>
         ) : (
           <>
@@ -1788,11 +1779,8 @@ useEffect(() => {
                 </div>
               )}
             </div>
-            <div className="header-actions">
-              {langToggle}
-              <div className="month-total">
-                <b>{formatMoney(filteredTotalSpent)}</b>
-              </div>
+            <div className="month-total">
+              <b>{formatMoney(filteredTotalSpent)}</b>
             </div>
           </>
         )}
@@ -2007,7 +1995,7 @@ useEffect(() => {
                 </small>
                 <b>{formatMoney(donutAmount)}</b>
                 {donutPercent !== undefined && (
-                  <span className="donut-share">{donutPercent}% месяца</span>
+                  <span className="donut-share">{t("monthShare", { percent: donutPercent })}</span>
                 )}
               </div>
             </div>
