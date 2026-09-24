@@ -625,14 +625,72 @@ input:focus, select:focus { border-color: var(--accent-color); }
 }
 
 .chart-card { padding: 22px; }
-.donut { display: grid; width: 190px; height: 190px; place-items: center; margin: 4px auto 12px; border-radius: 50%; transition: transform .2s ease, box-shadow .2s ease; }
-.donut > div { display: grid; width: 126px; height: 126px; place-content: center; text-align: center; border-radius: 50%; background: var(--secondary-bg-color); }
+
+/* ===== Кольцевая диаграмма =====
+   Три слоя в жёстко фиксированном габарите 190×190. Геометрия кольца (внешний
+   диаметр и положение секторов) от выбора НЕ зависит, поэтому при выделении
+   категории ничего не смещается и не разъезжается:
+     .donut-ring  — базовое кольцо со всеми секторами в реальных пропорциях;
+     .donut-pop   — выбранный сектор: слой больше кольца на 8px с каждой
+                    стороны, но залит только своим сектором, поэтому он
+                    выступает наружу от центра (внешний радиус +8px), а его
+                    середина уходит под «дырку» — внутренний радиус тот же;
+     .donut > div — «дырка» с подписью поверх слоёв. */
+.donut {
+  position: relative;
+  display: grid;
+  width: 190px;
+  height: 190px;
+  place-items: center;
+  margin: 4px auto 12px;
+  border-radius: 50%;
+}
+.donut-ring,
+.donut-pop {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none; /* слои декоративные: тапы обрабатывает .chart-tab */
+}
+.donut-ring {
+  inset: 0;
+  z-index: 0;
+}
+/* Приглушение невыбранных секторов: opacity 0.45 (мягко, но заметно).
+   Анимация — через keyframes, потому что transition в проекте отключён
+   глобально (`* { transition: none !important }` на верхнем уровне) */
+.donut-ring--dim { animation: donut-ring-dim .25s ease-out forwards; }
+@keyframes donut-ring-dim {
+  from { opacity: 1; }
+  to { opacity: .45; }
+}
+/* Выступ выбранного сектора: слой растёт от 0.92× (внешний край совпадает с
+   кольцом) до 1× — за габарит кольца на 8px. Контейнер и соседние секторы
+   при этом не меняются, поэтому анимация не перекладывает соседние элементы */
+.donut-pop {
+  inset: -8px;
+  z-index: 1;
+  animation: donut-pop-in .22s ease-out;
+}
+@keyframes donut-pop-in {
+  from { opacity: 0; transform: scale(.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+.donut > div {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  width: 126px;
+  height: 126px;
+  place-content: center;
+  text-align: center;
+  border-radius: 50%;
+  background: var(--secondary-bg-color);
+}
 .donut b { max-width: 112px; font-size: 19px; letter-spacing: -.4px; }
 
-/* Выбранная категория: кольцо приподнимается, в центре — имя категории,
-   её сумма и доля в тратах месяца. Тап по самому графику ничего не меняет —
-   выбор снимается тапом по этой же категории или мимо графика */
-.donut--selected { transform: scale(1.05); }
+/* В центре кольца — имя выбранной категории, её сумма и доля в тратах месяца.
+   Тап по самому графику ничего не меняет — выбор снимается тапом по этой же
+   категории или мимо графика */
 .donut > div small { max-width: 108px; font-size: 11px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
 .donut > div .donut-share { margin-top: 1px; color: var(--hint-color); font-size: 11px; font-weight: 650; }
 

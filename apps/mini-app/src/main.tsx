@@ -17,7 +17,7 @@ import {
   type Lang,
   type Translator,
 } from "./i18n";
-import { buildChartGradient, type CategoryStat } from "./chartGradient";
+import { buildDonutLayout, type CategoryStat } from "./chartGradient";
 import { nextSelectedCategoryIdOnOutsideTap } from "./chartInteraction";
 import { cardDropIndex, cardDropLineY, type CardDragRect } from "./cardDrag";
 import "./styles.css";
@@ -1097,11 +1097,13 @@ useEffect(() => {
     };
   }, [categoryStats, dashboard, selectedCategoryId]);
 
-  // Диаграмма: выбранная категория показывается крупнее, остальные — приглушённо.
-  // Передаём id из selectedCategoryMeta: если категория удалена или id устарел,
-  // билдер получает undefined и диаграмма остаётся обычной (без приглушения всех секторов)
-  const chartBackground = useMemo(
-    () => buildChartGradient(categoryStats, selectedCategoryMeta?.id),
+  // Диаграмма: габариты кольца и положение секторов фиксированы, а выделение
+  // выбранной категории делается приглушением остальных секторов (.donut-ring--dim)
+  // и отдельным слоем-выступом наружу (.donut-pop). Передаём id из
+  // selectedCategoryMeta: если категория удалена или id устарел, билдер получает
+  // undefined — кольцо остаётся обычным, без приглушения и без выступа
+  const donut = useMemo(
+    () => buildDonutLayout(categoryStats, selectedCategoryMeta?.id),
     [categoryStats, selectedCategoryMeta?.id]
   );
 
@@ -1974,16 +1976,27 @@ useEffect(() => {
         <div className="chart-tab">
           {/* ===== Sticky-блок: диаграмма не уходит при скролле ===== */}
           <section className="chart-card chart-card--sticky">
-            <div
-              className={`donut${selectedCategoryMeta ? " donut--selected" : ""}`}
-              style={{
-                background: chartBackground,
-                // Подсветка кольца цветом выбранной категории (chart — плотный цвет сектора)
-                boxShadow: selectedCategoryMeta
-                  ? `0 0 0 6px color-mix(in srgb, ${selectedCategoryMeta.color.chart} 22%, transparent)`
-                  : undefined,
-              }}
-            >
+            {/* Кольцо живёт в фиксированном габарите 190×190: выбранный сектор
+                выступает наружу отдельным слоем, а не растягивает всё кольцо */}
+            <div className="donut">
+              {/* Слой 1: базовое кольцо. При выборе мягко приглушается целиком —
+                  секторы не меняют ни размер, ни положение */}
+              <span
+                aria-hidden="true"
+                className={`donut-ring${donut.active ? " donut-ring--dim" : ""}`}
+                style={{ background: donut.ring }}
+              />
+              {/* Слой 2: выбранный сектор «выезжает» наружу от центра (внешний
+                  радиус +8px). key — чтобы анимация перезапускалась на новом выборе */}
+              {donut.active && (
+                <span
+                  aria-hidden="true"
+                  key={donut.active.id}
+                  className="donut-pop"
+                  style={{ background: donut.active.wedge }}
+                />
+              )}
+              {/* Слой 3: «дырка» с подписью — перекрывает центр слоёв кольца */}
               <div>
                 <small
                   style={{
@@ -2018,8 +2031,9 @@ useEffect(() => {
                   key={category.id}
                   aria-pressed={isSelected}
                   style={{
-                    // Подложка плитки прозрачная: цветным остаётся только внешний контур
-                    border: `1px solid ${categoryColor.border}`,
+                    // Подложка плитки прозрачная: цветным остаётся только внешний
+                    // контур, толщину делаем заметной — 2px в цвете категории
+                    border: `2px solid ${categoryColor.border}`,
                     // Кольцо-разрыв в цвете категории: видно и вне плашки
                     boxShadow: isSelected
                       ? `0 0 0 2.5px var(--bg-color), 0 0 0 5px ${categoryColor.chart}`
