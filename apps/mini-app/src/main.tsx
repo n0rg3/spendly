@@ -1857,11 +1857,10 @@ useEffect(() => {
             {[...groupedExpenses.entries()].map(([catId, expenses]) => {
               const category = expenses[0].category;
               const total = expenses.reduce((sum, e) => sum + e.amount, 0);
-              // Тот же цвет, что у плашки на «Графике» и у сектора диаграммы
-              const categoryColor =
-                categoryColorById.get(catId) ?? getCategoryColor(category?.name ?? t("categoryOther"));
               return (
-                <div className="accordion-item accordion-item--category" key={catId} style={{ background: categoryColor.bg }}>
+                // Плашки всех категорий нейтральные — как «Все траты»:
+                // цвет категории в списке трат не используется
+                <div className="accordion-item" key={catId}>
                   <button className={`accordion-trigger ${expandedAccId.has(catId) ? "active" : ""}`} onClick={() => toggleAccordion(catId)}>
                     <div className="accordion-left">
                       <span className="mini-icon">{category?.icon ? <Icon name={category.icon} /> : "•"}</span>
@@ -2019,7 +2018,7 @@ useEffect(() => {
                   key={category.id}
                   aria-pressed={isSelected}
                   style={{
-                    background: categoryColor.bg,
+                    // Подложка плитки прозрачная: цветным остаётся только внешний контур
                     border: `1px solid ${categoryColor.border}`,
                     // Кольцо-разрыв в цвете категории: видно и вне плашки
                     boxShadow: isSelected

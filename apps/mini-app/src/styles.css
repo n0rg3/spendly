@@ -241,9 +241,9 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .month-total b { margin-top: 3px; color: var(--link-color); font-size: 16px; letter-spacing: -.3px; }
 
 .category-icon-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 10px; }
-/* Плашка категории: фон = её цвет из getCategoryColor (inline-стиль), а иконка,
-   название и сумма всегда белые — единый стиль на любом hue и полная
-   синхронизация с сектором круговой диаграммы */
+/* Плитка категории: подложка полностью прозрачная — ни плитка, ни иконка
+   не залиты цветом. Цветным остаётся только внешний контур (inline border из
+   getCategoryColor); текст и глиф рисуются обычным цветом текста темы */
 .category-icon-button {
   display: grid;
   gap: 5px;
@@ -251,64 +251,45 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   min-width: 0;
   padding: 12px 6px 10px;
   border-radius: 18px;
-  /* fallback, если inline-стиль с цветом категории не передан */
-  background: var(--button-color);
-  color: #000000;
+  /* fallback, если inline-стиль с цветом контура не передан */
+  background: transparent;
+  color: var(--text-color);
   text-align: center;
   transition: transform .15s ease, box-shadow .15s ease;
 }
 
-@media (prefers-color-scheme: dark) {
-  .category-icon-button {
-    color: #ffffff;
-  }
-}
 .category-icon-button > span {
   display: grid;
   width: 34px;
   height: 34px;
   place-items: center;
   border-radius: 10px;
-  /* Иконка не перекрашивается: контрастный глиф на цветной плашке */
+  /* Подложки под иконкой нет — глиф рисуется цветом текста */
   background: transparent;
   font-size: 20px;
   font-weight: 800;
-  color: #000000;
+  color: inherit;
   transition: transform .15s ease;
 }
 
-@media (prefers-color-scheme: dark) {
-  .category-icon-button > span {
-    color: #ffffff;
-  }
-}
-
-/* Обёртка иконки категории (замена system-icon-bg):
-   полупрозрачный фон + лёгкая рамка для плашек с новым дизайном */
+/* Обёртка иконки категории: без заливки и без рамки — под иконкой только фон
+   страницы, а единственный цветной элемент — внешний контур плитки */
 .category-icon-wrapper {
   display: grid;
   width: 34px;
   height: 34px;
   place-items: center;
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: transparent;
+  border: 0;
   font-size: 20px;
   font-weight: 800;
-  color: #000000;
+  color: inherit;
   transition: transform .15s ease;
 }
 
-@media (prefers-color-scheme: dark) {
-  .category-icon-wrapper {
-    background: rgba(255, 255, 255, 0.15);
-    border: 1px solid rgba(255, 255, 255, 0.25);
-    color: #ffffff;
-  }
-}
-
 /* Цвет текста задаём явно: глобальное правило small { color: var(--hint-color) }
-   дало бы серый текст на цветном фоне */
+   дало бы приглушённо-серые суммы — наследуем цвет текста плитки */
 .category-icon-button b { width: 100%; overflow: hidden; font-size: 11px; font-weight: 650; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
 .category-icon-button small { margin-top: -2px; font-size: 10px; font-weight: 650; color: inherit; opacity: .85; }
 /* Выбранная категория (её часть увеличена на диаграмме): кольцо вокруг плашки.
@@ -690,29 +671,9 @@ input:focus, select:focus { border-color: var(--accent-color); }
 .mini-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; color: var(--button-color); background: color-mix(in srgb, var(--button-color) 12%, transparent); }
 .mini-icon svg { width: 15px; height: 15px; }
 
-/* ===== Плашки категорий на экране «Траты» =====
-   Фон = цвет категории (тот же, что у плашки на «Графике» и у сектора
-   диаграммы — inline-стиль из getCategoryColor). Иконка, название и сумма
-   чёрные в светлой теме, белые — в тёмной; цветной остаётся только заголовок-триггер, список трат внутри
-   остаётся на нейтральном фоне */
-.accordion-item--category { box-shadow: 0 4px 14px color-mix(in srgb, var(--text-color) 10%, transparent); }
-.accordion-item--category .accordion-trigger { color: #000000; }
-.accordion-item--category .accordion-trigger span { color: #000000; }
-.accordion-item--category .accordion-trigger:active { background: color-mix(in srgb, #000000 14%, transparent); }
-/* Иконка — контрастный глиф на полупрозрачном фоне */
-.accordion-item--category .mini-icon { color: #000000; background: color-mix(in srgb, #000000 12%, transparent); }
-.accordion-item--category .accordion-right b { color: #000000; }
-
-@media (prefers-color-scheme: dark) {
-  .accordion-item--category .accordion-trigger { color: #ffffff; }
-  .accordion-item--category .accordion-trigger span { color: #ffffff; }
-  .accordion-item--category .accordion-trigger:active { background: color-mix(in srgb, #ffffff 14%, transparent); }
-  .accordion-item--category .mini-icon { color: #ffffff; background: color-mix(in srgb, #ffffff 24%, transparent); }
-  .accordion-item--category .accordion-right b { color: #ffffff; }
-}
-.accordion-item--category .accordion-right svg { color: #ffffff; opacity: .85; }
-/* Внутри раскрытой плашки — обычные цвета, иначе белый текст был бы нечитаем */
-.accordion-item--category .accordion-content { color: var(--text-color); }
+/* Плашки категорий на экране «Траты» больше не окрашиваются в цвет категории:
+   все группы выглядят как нейтральная карточка «Все траты» (.accordion-item),
+   поэтому отдельные правила для .accordion-item--category удалены */
 
 .savings-card { padding: 30px 22px; text-align: center; }
 .savings-card h2 { margin: 12px 0 8px; }
