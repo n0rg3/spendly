@@ -2,7 +2,7 @@
 import { Component, StrictMode, Fragment, useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import * as LucideIcons from "lucide-react";
-import { collection, doc, setDoc, getDoc, deleteDoc, onSnapshot, query, orderBy } from "firebase/firestore";
+import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy } from "firebase/firestore";
 import { QRCodeSVG } from "qrcode.react";
 import Barcode, { type BarcodeProps } from "react-barcode";
 import { db } from "./firebase";
@@ -230,44 +230,23 @@ function currentMonthKey() {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// ===== Кэш категорий товаров (экономия токенов Gemini) =====
-// Firestore: коллекция item_category_cache, документ = userId,
-// поле items = { [нормализованное имя товара]: название категории }.
-type ItemCategoryCache = Record<string, string>;
+// ===== Даты чека =====
+// Разбор чека целиком делает Gemini на сервере и отдаёт dateTime уже в ISO 8601,
+// поэтому на клиенте не осталось ни регэкспов формата сербского чека, ни кэша категорий.
 
-// Нормализация имени товара: lowercase, trim, схлопывание пробелов
-function normalizeItemName(name: string): string {
-  return name.toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-// Читает кэш «товар -> категория» из Firestore
-async function readItemCategoryCache(userId: string): Promise<ItemCategoryCache> {
-  try {
-    const snap = await getDoc(doc(db, "item_category_cache", userId));
-    return (snap.data()?.items as ItemCategoryCache | undefined) ?? {};
-  } catch {
-    return {};
-  }
-}
-
-// Записывает/обновляет сопоставления «товар -> категория» (merge, не затирает остальные)
-async function writeItemCategoryCache(userId: string, entries: ItemCategoryCache): Promise<void> {
-  if (Object.keys(entries).length === 0) return;
-  try {
-    await setDoc(doc(db, "item_category_cache", userId), { items: entries }, { merge: true });
-  } catch (error) {
-    console.warn("Не удалось обновить кэш категорий товаров:", error);
-  }
-}
-
-// "16.9.2026. 17:50:44" (формат сербских чеков, месяц/день могут быть однозначными) -> ISO
+// Безопасно приводит dateTime от сервера к ISO; невалидное значение -> null
 function receiptDateToIso(value: string | null): string | null {
   if (!value) return null;
-  const match = value.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})\.?\s+(\d{1,2}):(\d{2})/);
-  if (!match) return null;
-  const [, day, month, year, hours, minutes] = match;
-  const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes));
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? null : new Date(timestamp).toISOString();
+}
+
+// Подпись даты/времени чека в модалке: «2026-09-16 17:50»
+function formatReceiptDateTime(value: string | null): string | null {
+  const iso = receiptDateToIso(value);
+  if (!iso) return null;
+  const { date, time } = toLocalDateTime(iso);
+  return `${date} ${time}`;
 }
 
 function formatMonth(value: string, lang: Lang = "ru") {
@@ -1275,14 +1254,12 @@ useEffect(() => {
           // На Vercel-функции заголовок просто игнорируется.
           "ngrok-skip-browser-warning": "true",
         },
-        // categories — названия категорий пользователя, чтобы Gemini вернул их же
-        // (если не передать, функция использует дефолтный список из ТЗ)
-        // categoryCache — сопоставления «товар -> категория» из Firestore:
-        // сервер подставит их без обращения к Gemini (экономия токенов)
+        // На сервер уходят только QR-ссылка и категории пользователя: разбор чека
+        // и автокатегоризацию делает один вызов Gemini 2.5 Flash
+        // (если категории не передать, функция использует дефолтный список из ТЗ)
         body: JSON.stringify({
           qrUrl: receiptUrl,
           categories: dashboard?.categories.map((c) => c.name),
-          categoryCache: await readItemCategoryCache(getUserId()),
         }),
       });
 
@@ -1387,15 +1364,8 @@ useEffect(() => {
         totalSpent: allExpenses.reduce((sum, e) => sum + e.amount, 0),
       });
 
-      // Успешное сохранение чека: фиксируем сопоставления «товар -> категория» в кэше
-      const cacheEntries: ItemCategoryCache = {};
-      for (const expense of newExpenses) {
-        if (!expense.description || !expense.category) continue;
-        const key = normalizeItemName(expense.description);
-        if (key) cacheEntries[key] = expense.category.name;
-      }
-      await writeItemCategoryCache(getUserId(), cacheEntries);
-
+      // Успешное сохранение чека — кэш «товар -> категория» больше не нужен:
+      // категории каждый раз проставляет модель
       closeReceipt();
     } catch {
       setReceiptError(t("receiptSaveError"));
@@ -2451,7 +2421,9 @@ useEffect(() => {
           >
             <div className="receipt-modal-header">
               <b>{t("receiptTitle")}</b>
-              {parsedReceipt.dateTime && <span className="receipt-date">🗓 {parsedReceipt.dateTime}</span>}
+              {formatReceiptDateTime(parsedReceipt.dateTime) && (
+                <span className="receipt-date">🗓 {formatReceiptDateTime(parsedReceipt.dateTime)}</span>
+              )}
               <small>{t("receiptHint")}</small>
             </div>
 
@@ -2489,12 +2461,6 @@ useEffect(() => {
                             // Ручной выбор категории меняет ТОЛЬКО привязку категории
                             // позиции: сумма позиции и итог чека не пересчитываются
                             setReceiptDraft(index, { categoryId: e.target.value });
-                            // Смена категории — сразу обновляем кэш «товар -> категория»
-                            const selectedCategory = dashboard?.categories.find((c) => c.id === e.target.value);
-                            if (selectedCategory) {
-                              const key = normalizeItemName(item.name);
-                              if (key) void writeItemCategoryCache(getUserId(), { [key]: selectedCategory.name });
-                            }
                           }}
                           aria-label={t("itemCategoryAria", { name: item.name })}
                         >

@@ -522,235 +522,169 @@ app.patch<{
   return updatedExpenses.find((e) => e.id === request.params.id);
 });
 
-// ===== Парсинг сербских e-чеков (suf.purs.gov.rs) =====
+// ===== Распознавание сербских e-чеков (suf.purs.gov.rs) целиком через Gemini =====
+// Разбор позиций и автокатегоризация выполняются ОДНИМ вызовом LLM
+// (Gemini 2.5 Flash, Structured Outputs / responseSchema): API только скачивает
+// страницу чека и передаёт модели её сырой текст. Регэкспов для позиций, словарей
+// и кэша «товар -> категория» больше нет.
 type ReceiptItem = { name: string; qty: number; price: number; total: number };
-type ParsedReceipt = { dateTime: string | null; items: ReceiptItem[]; total: number };
+type CategorizedReceiptItem = ReceiptItem & { category: string | null };
+type ParsedReceipt = { dateTime: string | null; items: CategorizedReceiptItem[]; total: number };
 
 const RECEIPT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-// Числа в сербском формате: 1.234,56 (точка — тысячи, запятая — дробная часть)
-function parseSerbianNumber(raw: string): number {
-  const cleaned = raw.replace(/[^\d.,-]/g, "").trim();
-  if (!cleaned) return NaN;
-  const normalized = cleaned.includes(",")
-    ? cleaned.replace(/\./g, "").replace(",", ".")
-    : cleaned.replace(/,/g, "");
-  return Number.parseFloat(normalized);
-}
-
-function parseReceiptHtml(html: string): ParsedReceipt {
-  const $ = cheerio.load(html);
-
-  // Дата и время покупки: приоритетно #sdcDateTimeLabel, затем #sdcDateTime, затем поиск по тексту
-  let dateTime: string | null = $("#sdcDateTimeLabel").text().trim() || $("#sdcDateTime").text().trim() || null;
-  if (!dateTime) {
-    const bodyText = $("body").text();
-    const dateMatch = bodyText.match(/\d{1,2}\.\d{1,2}\.\d{4}\.?\s+\d{1,2}:\d{2}(?::\d{2})?/);
-    dateTime = dateMatch ? dateMatch[0] : null;
-  }
-
-  // Числа в тексте чека заканчиваются сербским десятичным: "134,99" (или "1.234,56")
-  const looksLikeNumber = (value: string): boolean => /^[\d.,]+$/.test(value) && /\d/.test(value);
-
-  const items: ReceiptItem[] = [];
-
-  // Способ 1: строки таблицы спецификации (если Knockout отрендерил их на сервере)
-  $("table.invoice-table tr, table.invoice-table tbody tr").each((_, row) => {
-    const cells = $(row)
-      .find("td")
-      .map((__, cell) => $(cell).text().trim())
-      .get();
-
-    if (cells.length < 4) return;
-    const totalRaw = cells[3] ?? "";
-    const qtyRaw = cells[1] ?? "";
-    const priceRaw = cells[2] ?? "";
-    const name = cells[0] ?? "";
-
-    const total = parseSerbianNumber(totalRaw);
-    if (!Number.isFinite(total)) return;
-
-    const qty = parseSerbianNumber(qtyRaw);
-    const price = parseSerbianNumber(priceRaw);
-
-    items.push({
-      name,
-      qty: Number.isFinite(qty) ? qty : 1,
-      price: Number.isFinite(price) ? price : total,
-      total,
-    });
-  });
-
-  // Способ 2 (основной на практике): текстовый дамп кассового чека в <pre> (панель #collapse3).
-  // Статический HTML отдаёт таблицу товаров пустой (её рендерит Knockout.js на клиенте),
-  // но дамп содержит строки вида "BOMBONE HARIBO STAR MIX  KOM (Ђ)\n 134,99 1 134,99"
-  // (название, цена за ед., количество, итог) между заголовком "Назив Цена Кол. Укупно"
-  // и строкой "Укупан износ".
-  if (items.length === 0) {
-    const receiptText = $("#collapse3 pre").text() || $("#PrintInvoice").text() || $("body").text();
-    const lines = receiptText.split("\n").map((line) => line.trim()).filter(Boolean);
-
-    let inItems = false;
-    let pendingName = "";
-
-    const pushItem = (name: string, priceRaw: string, qtyRaw: string, totalRaw: string) => {
-      const total = parseSerbianNumber(totalRaw);
-      const price = parseSerbianNumber(priceRaw);
-      const qty = parseSerbianNumber(qtyRaw);
-      if (!Number.isFinite(total) || total <= 0) return;
-      items.push({
-        name: name.trim(),
-        qty: Number.isFinite(qty) ? qty : 1,
-        price: Number.isFinite(price) ? price : total,
-        total,
-      });
-    };
-
-    for (const line of lines) {
-      if (!inItems) {
-        // Заголовок секции товаров: "Назив Цена Кол. Укупно" (или англ. "Name Price Qty Total")
-        if (/Назив|Name/i.test(line) && /Цена|Price/i.test(line)) {
-          inItems = true;
-        }
-        continue;
-      }
-
-      // Конец секции товаров
-      if (/Укупан износ|Total amount|Порез|Tax/i.test(line)) break;
-      if (/^-{3,}|={3,}/.test(line)) continue;
-
-      // Строка из трёх чисел: "<цена> <кол-во> <итог>" (название может быть на предыдущей строке)
-      const numbersMatch = line.match(/^([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)$/);
-      if (numbersMatch && looksLikeNumber(numbersMatch[1] || "") && looksLikeNumber(numbersMatch[2] || "") && looksLikeNumber(numbersMatch[3] || "")) {
-        const name = pendingName || line;
-        pushItem(name, numbersMatch[1] || "", numbersMatch[2] || "", numbersMatch[3] || "");
-        pendingName = "";
-        continue;
-      }
-
-      // Строка в одну строку: "<название> <цена> <кол-во> <итог>"
-      const itemMatch = line.match(/^(.+?)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)$/);
-      if (itemMatch && looksLikeNumber(itemMatch[2] || "") && looksLikeNumber(itemMatch[3] || "") && looksLikeNumber(itemMatch[4] || "")) {
-        pushItem(itemMatch[1] || "", itemMatch[2] || "", itemMatch[3] || "", itemMatch[4] || "");
-        pendingName = "";
-        continue;
-      }
-
-      // Иначе — продолжение/начало названия товара
-      pendingName = pendingName ? `${pendingName} ${line}` : line;
-    }
-  }
-
-  return { dateTime, items, total: items.reduce((sum, item) => sum + item.total, 0) };
-}
-
-// ===== Автокатегоризация позиций чека через Gemini =====
-type CategorizedReceiptItem = ReceiptItem & { category: string | null };
-
-// Кэш сопоставлений «товар -> категория» (экономия токенов Gemini).
-// Firestore: коллекция item_category_cache, документ = telegramId,
-// поле items = { [нормализованное имя товара]: название категории }.
-type ItemCategoryCache = Record<string, string>;
-
-// Нормализация имени товара: lowercase, trim, схлопывание пробелов
-function normalizeItemName(name: string): string {
-  return name.toLowerCase().replace(/\s+/g, " ").trim();
-}
+// Список категорий из ТЗ — используется, если клиент не передал свои
+const DEFAULT_RECEIPT_CATEGORIES = ["Продукты", "Тусичи", "Дом", "Транспорт", "Развлечения", "Остальное"];
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+// Модель по умолчанию: Structured Outputs поддерживает Gemini 2.5 Flash
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
-const appLog = app.log;
+// Страница чека может быть большой; модели достаточно текста покупки
+const MAX_RECEIPT_TEXT_LENGTH = 20_000;
 
-async function categorizeReceiptItems(
-  items: ReceiptItem[],
+// Системная инструкция: правила разбора чека и категоризации
+const RECEIPT_SYSTEM_INSTRUCTION = [
+  "Ты разбираешь сербские фискальные чеки (suf.purs.gov.rs) и категоризуешь покупки.",
+  "На вход приходит сырой текст чека — верни строго JSON по заданной схеме.",
+  "Правила:",
+  "1. items — все купленные позиции в исходном порядке. Служебные строки (итог, налог, сдача, заголовки, данные продавца и кассира) позициями не считаются.",
+  '2. price — цена за единицу, qty — количество, total — сумма по позиции. Сербский формат чисел ("134,99", "1.234,56") переводи в обычные числа.',
+  "3. category — ровно одно название из списка допустимых категорий; если ничего не подходит — null.",
+  "4. dateTime — дата и время покупки из чека в формате ISO 8601 (YYYY-MM-DDTHH:mm:ss).",
+  '5. total — итоговая сумма чека (строка "Укупан износ"), а если её нет — сумма total всех позиций.',
+  "Не добавляй пояснений, markdown и лишних полей — только JSON по схеме.",
+].join("\n");
+
+// Схема ответа модели: фиксирует JSON, который всегда возвращает Gemini
+function buildReceiptResponseSchema(categoriesList: string[]) {
+  return {
+    type: "object",
+    properties: {
+      dateTime: { type: "string", format: "date-time", nullable: true, description: "Дата и время покупки в формате ISO 8601" },
+      total: { type: "number", description: "Итоговая сумма чека" },
+      items: {
+        type: "array",
+        description: "Позиции чека",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Название товара как в чеке" },
+            qty: { type: "number", description: "Количество" },
+            price: { type: "number", description: "Цена за единицу" },
+            total: { type: "number", description: "Сумма по позиции" },
+            category: { type: "string", nullable: true, enum: categoriesList, description: "Категория из списка допустимых или null" },
+          },
+          required: ["name", "qty", "price", "total", "category"],
+        },
+      },
+    },
+    required: ["dateTime", "total", "items"],
+  };
+}
+
+// Сырой текст чека: убираем скрипты и стили, оставляем видимый текст страницы.
+// Позиции на сервере не разбираем — это делает модель.
+function extractReceiptText(html: string): string {
+  const $ = cheerio.load(html);
+  $("script, style, noscript").remove();
+
+  const raw =
+    $("#collapse3 pre").text() ||
+    $("#PrintInvoice").text() ||
+    $("#collapse3").text() ||
+    $("body").text();
+
+  return String(raw || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, MAX_RECEIPT_TEXT_LENGTH);
+}
+
+// Ответ модели (сырой JSON по схеме)
+type GeminiReceiptPayload = {
+  dateTime?: unknown;
+  total?: unknown;
+  items?: { name?: unknown; qty?: unknown; price?: unknown; total?: unknown; category?: unknown }[];
+};
+
+// Ответ модели -> формат API: числа числами, категория только из списка пользователя
+function normalizeReceipt(payload: GeminiReceiptPayload, categoriesList: string[]): ParsedReceipt {
+  const allowed = new Set(categoriesList);
+  const rawItems = Array.isArray(payload.items) ? payload.items : [];
+
+  const items: CategorizedReceiptItem[] = rawItems
+    .map((item) => {
+      const total = Number(item?.total);
+      const price = Number(item?.price);
+      const qty = Number(item?.qty);
+      return {
+        name: String(item?.name ?? "").trim(),
+        qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
+        price: Number.isFinite(price) ? price : Number.isFinite(total) ? total : 0,
+        total: Number.isFinite(total) ? total : 0,
+        category:
+          typeof item?.category === "string" && allowed.has(item.category) ? item.category : null,
+      };
+    })
+    .filter((item) => item.name.length > 0 && item.total > 0);
+
+  const total = Number(payload.total);
+  return {
+    dateTime: typeof payload.dateTime === "string" && payload.dateTime ? payload.dateTime : null,
+    items,
+    total: Number.isFinite(total) ? total : items.reduce((sum, item) => sum + item.total, 0),
+  };
+}
+
+// Единственный вызов LLM: разбор позиций + категоризация + дата и итог чека
+async function parseReceiptWithGemini(
+  receiptText: string,
   categoriesList: string[],
-  cache: ItemCategoryCache = {},
-): Promise<CategorizedReceiptItem[]> {
-  // Без товаров категоризировать нечего
-  if (items.length === 0) return [];
-
-  // Сначала подставляем категории из кэша — такие позиции в Gemini не уходят
-  const resolved = items.map((item) => {
-    const cachedCategory = cache[normalizeItemName(item.name)] ?? null;
-    return {
-      item,
-      cachedCategory: cachedCategory && categoriesList.includes(cachedCategory) ? cachedCategory : null,
-    };
-  });
-
-  const uncached = resolved.filter((entry) => entry.cachedCategory === null);
-
-  // Всё уже в кэше — Gemini не нужен вовсе
-  if (uncached.length === 0) {
-    return resolved.map(({ item, cachedCategory }) => ({ ...item, category: cachedCategory }));
-  }
-
-  // Нет ключа или списка категорий — возвращаем позиции (кэш уже применён выше)
-  if (!GEMINI_API_KEY || categoriesList.length === 0) {
-    return resolved.map(({ item, cachedCategory }) => ({ ...item, category: cachedCategory }));
+): Promise<ParsedReceipt> {
+  if (!GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY не задан — распознавание чеков недоступно");
   }
 
   const prompt = [
-    "You are a receipt item categorizer. Assign each item to exactly one category from the provided list.",
-    "If no category fits, use null.",
-    "Respond with STRICT JSON only — no markdown, no explanations, no extra text.",
-    "The response must be a JSON array in this exact format:",
-    '[{ "name": "MLEKO 2.8%", "qty": 1, "price": 150, "total": 150, "category": "Продукты" }]',
-    `Available categories: ${JSON.stringify(categoriesList)}`,
-    // Важно: отправляем ТОЛЬКО позиции, которых нет в кэше
-    `Items: ${JSON.stringify(uncached.map((entry) => entry.item))}`,
+    `Допустимые категории: ${JSON.stringify(categoriesList)}`,
+    "Сырой текст чека:",
+    receiptText,
   ].join("\n");
 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0, responseMimeType: "application/json" },
-        }),
-        signal: AbortSignal.timeout(20_000),
-      },
-    );
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: RECEIPT_SYSTEM_INSTRUCTION }] },
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0,
+          responseMimeType: "application/json",
+          responseSchema: buildReceiptResponseSchema(categoriesList),
+        },
+      }),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
 
-    if (!response.ok) {
-      appLog.warn({ status: response.status }, "Gemini categorization HTTP error");
-      return items.map((item) => ({ ...item, category: null }));
-    }
-
-    const payload = (await response.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
-    const raw = payload.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-
-    const parsed = JSON.parse(raw) as { category?: string }[];
-    const allowed = new Set(categoriesList);
-
-    // Мержим категории от LLM: ответы приходят только для некэшированных позиций
-    // (тот же порядок, что и в списке uncached), закэшированные уже проставлены
-    let aiIndex = 0;
-    return resolved.map(({ item, cachedCategory }) => {
-      if (cachedCategory !== null) {
-        return { ...item, category: cachedCategory };
-      }
-      const aiItem = parsed[aiIndex++];
-      const aiCategory = typeof aiItem?.category === "string" ? aiItem.category : null;
-      return {
-        ...item,
-        category: aiCategory && allowed.has(aiCategory) ? aiCategory : null,
-      };
-    });
-  } catch (error) {
-    appLog.error(error, "Gemini categorization failed");
-    return items.map((item) => ({ ...item, category: null }));
+  if (!response.ok) {
+    throw new Error(`Gemini вернул ошибку: HTTP ${response.status}`);
   }
+
+  const payload = (await response.json()) as {
+    candidates?: { content?: { parts?: { text?: string }[] } }[];
+  };
+  const raw = payload.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+  return normalizeReceipt(JSON.parse(raw) as GeminiReceiptPayload, categoriesList);
 }
 
-app.post<{ Body: { qrUrl?: string } }>("/api/receipts/parse", async (request, reply) => {
+app.post<{ Body: { qrUrl?: string; categories?: string[] } }>("/api/receipts/parse", async (request, reply) => {
   const qrUrl = request.body?.qrUrl?.trim();
   if (!qrUrl) {
     return reply.code(400).send({ error: "Передайте URL чека из QR-кода (qrUrl)" });
@@ -782,46 +716,28 @@ app.post<{ Body: { qrUrl?: string } }>("/api/receipts/parse", async (request, re
     return reply.code(502).send({ error: `Сайт чека вернул ошибку: HTTP ${response.status}` });
   }
 
-  const html = await response.text();
-  const receipt = parseReceiptHtml(html);
-
-  if (!receipt.dateTime && receipt.items.length === 0) {
+  // Сырой текст страницы чека -> единственный вызов Gemini (разбор + категоризация)
+  const receiptText = extractReceiptText(await response.text());
+  if (!receiptText) {
     return reply.code(422).send({ error: "Не удалось распознать структуру чека" });
   }
 
-  // Автокатегоризация позиций по категориям пользователя
-  // 1) Читаем кэш сопоставлений «товар -> категория» из Firestore
-  const cacheDocRef = firestore.collection("item_category_cache").doc(request.user.telegramId);
-  const cacheDoc = await cacheDocRef.get();
-  const cache = (cacheDoc.data()?.items as ItemCategoryCache | undefined) ?? {};
+  // Категории пользователя опциональны; по умолчанию — фиксированный список из ТЗ
+  const categoriesList =
+    Array.isArray(request.body?.categories) && request.body.categories.length > 0
+      ? request.body.categories.map(String)
+      : DEFAULT_RECEIPT_CATEGORIES;
 
-  // 2) В Gemini уходят только позиции, которых нет в кэше
-  const categorizedItems = await categorizeReceiptItems(
-    receipt.items,
-    request.dashboard.categories.map((c) => c.name),
-    cache,
-  );
-
-  // 3) Новые сопоставления записываем обратно в кэш
-  const newEntries: ItemCategoryCache = {};
-  for (const item of categorizedItems) {
-    if (!item.category) continue;
-    const key = normalizeItemName(item.name);
-    if (!key || cache[key] === item.category) continue;
-    newEntries[key] = item.category;
+  try {
+    const receipt = await parseReceiptWithGemini(receiptText, categoriesList);
+    if (receipt.items.length === 0) {
+      return reply.code(422).send({ error: "Не удалось распознать структуру чека" });
+    }
+    return reply.send(receipt);
+  } catch (error) {
+    request.log.error(error, "Gemini receipt parsing failed");
+    return reply.code(503).send({ error: "Сервис распознавания чеков временно недоступен" });
   }
-  if (Object.keys(newEntries).length > 0) {
-    // set с merge — не затирает чужие записи в документе
-    await cacheDocRef.set({ items: newEntries }, { merge: true }).catch((err) => {
-      appLog.error(err, "Failed to write item category cache");
-    });
-  }
-
-  return reply.send({
-    dateTime: receipt.dateTime,
-    items: categorizedItems,
-    total: receipt.total,
-  });
 });
 
 declare module "fastify" {

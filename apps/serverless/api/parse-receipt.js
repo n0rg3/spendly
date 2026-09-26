@@ -1,7 +1,14 @@
-// ===== Vercel Serverless: парсинг сербских чеков (suf.purs.gov.rs) + Gemini-категоризация =====
+// ===== Vercel Serverless: распознавание сербских чеков (suf.purs.gov.rs) целиком через Gemini =====
 // Деплой: vercel из этой папки (apps/serverless). Эндпоинт: POST /api/receipts/parse
 // (алиас на /api/parse-receipt через vercel.json rewrites).
-// Env: GEMINI_API_KEY, GEMINI_MODEL (по умолчанию gemini-3.6-flash),
+//
+// Весь разбор чека и автокатегоризация выполняются ОДНИМ вызовом LLM
+// (Gemini 2.5 Flash, Structured Outputs / responseSchema). Функция лишь скачивает
+// страницу чека и отдаёт модели её сырой текст: ни регулярных выражений для позиций,
+// ни словарей-фолбэков, ни кэшей «товар -> категория» больше нет.
+//
+// Env: GEMINI_API_KEY (обязателен — без него распознавание недоступно),
+//      GEMINI_MODEL (по умолчанию gemini-2.5-flash),
 //      ALLOWED_ORIGINS (опционально, через запятую — дополнительные CORS-источники).
 import * as cheerio from "cheerio";
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -9,97 +16,149 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 const RECEIPT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+// Список категорий из ТЗ — используется, если клиент не передал свои
 const DEFAULT_CATEGORIES = ["Продукты", "Тусичи", "Дом", "Транспорт", "Развлечения", "Остальное"];
 
-// --- Базовый словарь категорий (Fallback Matcher) ---
-// Локальный маппинг ключевых слов (русский / сербский / латиница). Применяется
-// ПОСЛЕ кэша сопоставлений и Gemini, перед финальным сбросом в null:
-// если товар узнали по ключевому слову — присваиваем категорию пользователя.
-// names — синонимы группы: имя категории пользователя считается совпавшим,
-// если оно равно (или содержит) один из синонимов (без учёта регистра).
-const CATEGORY_GROUPS = [
-  {
-    id: "food",
-    keywords: [
-      "hleb", "хлеб", "mleko", "молоко", "voda", "вода", "sir", "сыр",
-      "meso", "мясо", "jaja", "яйца", "maxi", "idea", "lidl",
-    ],
-    names: [
-      "продукты", "продукты питания", "еда", "продовольствие", "супермаркет",
-      "продуктовый магазин", "food", "groceries", "grocery", "supermarket", "храна",
-    ],
-  },
-  {
-    id: "tusici",
-    keywords: ["kava", "кофе", "pica", "пицца", "burger", "ресторан", "restoran"],
-    names: ["тусичи", "tusici", "тусич"],
-  },
-  {
-    id: "transport",
-    keywords: ["gorivo", "бензин", "taxi", "такси", "parking", "паркинг", "парковка"],
-    names: [
-      "транспорт", "авто", "автомобиль", "топливо", "горючее", "бензин",
-      "transport", "car", "fuel", "petrol", "gas", "gorivo",
-    ],
-  },
-];
+// Модель по умолчанию: Structured Outputs (responseSchema) поддерживается Gemini 2.5 Flash
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 
-// Нормализация текста: lowercase, ё→е, всё не-буквенное — в пробел
-function normalizeText(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/ё/g, "е")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
+// Страница чека может быть большой; модели достаточно текста покупки
+const MAX_RECEIPT_TEXT_LENGTH = 20_000;
+
+// Системная инструкция: правила разбора чека и категоризации
+const SYSTEM_INSTRUCTION = [
+  "Ты разбираешь сербские фискальные чеки (suf.purs.gov.rs) и категоризуешь покупки.",
+  "На вход приходит сырой текст чека — верни строго JSON по заданной схеме.",
+  "Правила:",
+  "1. items — все купленные позиции в исходном порядке. Служебные строки (итог, налог, сдача, заголовки, данные продавца и кассира) позициями не считаются.",
+  '2. price — цена за единицу, qty — количество, total — сумма по позиции. Сербский формат чисел ("134,99", "1.234,56") переводи в обычные числа.',
+  "3. category — ровно одно название из списка допустимых категорий; если ничего не подходит — null.",
+  "4. dateTime — дата и время покупки из чека в формате ISO 8601 (YYYY-MM-DDTHH:mm:ss).",
+  '5. total — итоговая сумма чека (строка "Укупан износ"), а если её нет — сумма total всех позиций.',
+  "Не добавляй пояснений, markdown и лишних полей — только JSON по схеме.",
+].join("\n");
+
+
+// Схема ответа модели: задаёт фиксированный JSON, который всегда вернёт Gemini
+function buildResponseSchema(categoriesList) {
+  return {
+    type: "object",
+    properties: {
+      dateTime: {
+        type: "string",
+        format: "date-time",
+        nullable: true,
+        description: "Дата и время покупки в формате ISO 8601",
+      },
+      total: { type: "number", description: "Итоговая сумма чека" },
+      items: {
+        type: "array",
+        description: "Позиции чека",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Название товара как в чеке" },
+            qty: { type: "number", description: "Количество" },
+            price: { type: "number", description: "Цена за единицу" },
+            total: { type: "number", description: "Сумма по позиции" },
+            category: {
+              type: "string",
+              nullable: true,
+              enum: categoriesList,
+              description: "Категория из списка допустимых или null",
+            },
+          },
+          required: ["name", "qty", "price", "total", "category"],
+        },
+      },
+    },
+    required: ["dateTime", "total", "items"],
+  };
 }
 
-// Ключевое слово совпадает, если какой-то токен названия равен ему
-// или начинается с него (склонения: «молоко» → «молочный»)
-function matchesKeyword(name, keyword) {
-  const kw = normalizeText(keyword);
-  if (!kw) return false;
-  const tokens = normalizeText(name).split(" ").filter(Boolean);
-  return tokens.some((token) => token === kw || (kw.length >= 3 && token.startsWith(kw)));
+// Сырой текст чека: убираем скрипты/стили и отдаём видимый текст страницы.
+// Никакого разбора позиций на сервере — это делает модель.
+export function extractReceiptText(html) {
+  const $ = cheerio.load(html);
+  $("script, style, noscript").remove();
+
+  const raw =
+    $("#collapse3 pre").text() ||
+    $("#PrintInvoice").text() ||
+    $("#collapse3").text() ||
+    $("body").text();
+
+  return String(raw || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, MAX_RECEIPT_TEXT_LENGTH);
 }
 
-// Имя категории пользователя, соответствующее смысловой группе (или null)
-function resolveGroupCategory(group, categoriesList) {
-  const normalized = categoriesList.map((name) => ({ name, norm: normalizeText(name) }));
+// Ответ модели -> формат API: числа числами, категория только из списка пользователя
+function normalizeReceipt(payload, categoriesList) {
+  const allowed = new Set(categoriesList);
+  const rawItems = Array.isArray(payload.items) ? payload.items : [];
 
-  // 1) точное совпадение с синонимом группы
-  for (const alias of group.names) {
-    const aliasNorm = normalizeText(alias);
-    const hit = normalized.find((entry) => entry.norm === aliasNorm);
-    if (hit) return hit.name;
+  const items = rawItems
+    .map((item) => {
+      const total = Number(item?.total);
+      const price = Number(item?.price);
+      const qty = Number(item?.qty);
+      return {
+        name: String(item?.name ?? "").trim(),
+        qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
+        price: Number.isFinite(price) ? price : Number.isFinite(total) ? total : 0,
+        total: Number.isFinite(total) ? total : 0,
+        category:
+          typeof item?.category === "string" && allowed.has(item.category) ? item.category : null,
+      };
+    })
+    .filter((item) => item.name && item.total > 0);
+
+  const total = Number(payload.total);
+  return {
+    dateTime: typeof payload.dateTime === "string" && payload.dateTime ? payload.dateTime : null,
+    items,
+    total: Number.isFinite(total) ? total : items.reduce((sum, item) => sum + item.total, 0),
+  };
+}
+
+// Единственный вызов LLM: разбор позиций + категоризация + дата и итог чека
+async function parseReceiptWithGemini(receiptText, categoriesList) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    const error = new Error("GEMINI_API_KEY не задан — распознавание чеков недоступно");
+    error.status = 503;
+    throw error;
   }
 
-  // 2) частичное совпадение («Кафе и рестораны», «Продукты из Lidl» и т.п.)
-  for (const alias of group.names) {
-    const aliasNorm = normalizeText(alias);
-    const hit = normalized.find(
-      (entry) => entry.norm.length >= 3 && (entry.norm.includes(aliasNorm) || aliasNorm.includes(entry.norm)),
-    );
-    if (hit) return hit.name;
-  }
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel(
+    {
+      model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
+      systemInstruction: SYSTEM_INSTRUCTION,
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: "application/json",
+        responseSchema: buildResponseSchema(categoriesList),
+      },
+    },
+    // GEMINI_BASE_URL — опциональный override (тесты/прокси); в production не нужен
+    process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : undefined,
+  );
 
-  return null;
+  const prompt = [
+    `Допустимые категории: ${JSON.stringify(categoriesList)}`,
+    "Сырой текст чека:",
+    receiptText,
+  ].join("\n");
+
+  const result = await model.generateContent(prompt);
+  const payload = JSON.parse(result.response.text() || "{}");
+  return normalizeReceipt(payload, categoriesList);
 }
-
-// Fallback-категория для позиции чека по базовому словарю (или null).
-// Экспортируется для тестов
-export function fallbackCategoryFor(itemName, categoriesList) {
-  const name = String(itemName || "").trim();
-  if (!name) return null;
-  for (const group of CATEGORY_GROUPS) {
-    if (group.keywords.some((keyword) => matchesKeyword(name, keyword))) {
-      return resolveGroupCategory(group, categoriesList);
-    }
-  }
-  return null;
-}
-
-// Актуальная модель Gemini (gemini-2.0-flash снята с поддержки — API отвечает 404)
-const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
 
 // --- CORS: GitHub Pages + localhost + доп. источники из env ---
 function corsHeaders(origin) {
@@ -120,210 +179,6 @@ function corsHeaders(origin) {
   // Чужой origin — заголовок не отдаём вовсе (браузер заблокирует запрос)
   if (origin && allowed.includes(origin)) headers["Access-Control-Allow-Origin"] = origin;
   return headers;
-}
-
-// --- Числа в сербском формате: 1.234,56 ---
-function parseSerbianNumber(raw) {
-  const cleaned = String(raw || "").replace(/[^\d.,-]/g, "").trim();
-  if (!cleaned) return NaN;
-  const normalized = cleaned.includes(",")
-    ? cleaned.replace(/\./g, "").replace(",", ".")
-    : cleaned.replace(/,/g, "");
-  return Number.parseFloat(normalized);
-}
-
-function looksLikeNumber(value) {
-  return /^[\d.,]+$/.test(value) && /\d/.test(value);
-}
-
-// --- Парсинг HTML чека ---
-function parseReceiptHtml(html) {
-  const $ = cheerio.load(html);
-
-  // Дата/время: #sdcDateTimeLabel ("16.9.2026. 17:50:44"), fallback #sdcDateTime / регэксп
-  let dateTime = $("#sdcDateTimeLabel").text().trim() || $("#sdcDateTime").text().trim() || null;
-  if (!dateTime) {
-    const match = $("body")
-      .text()
-      .match(/\d{1,2}\.\d{1,2}\.\d{4}\.?\s+\d{1,2}:\d{2}(?::\d{2})?/);
-    dateTime = match ? match[0] : null;
-  }
-
-  const items = [];
-
-  // Способ 1: таблица спецификации (если Knockout отрендерил её на сервере)
-  $("table.invoice-table tr, table.invoice-table tbody tr").each((_, row) => {
-    const cells = $(row)
-      .find("td")
-      .map((__, cell) => $(cell).text().trim())
-      .get();
-    if (cells.length < 4) return;
-    const total = parseSerbianNumber(cells[3]);
-    if (!Number.isFinite(total)) return;
-    const qty = parseSerbianNumber(cells[1]);
-    const price = parseSerbianNumber(cells[2]);
-    items.push({
-      name: cells[0] || "",
-      qty: Number.isFinite(qty) ? qty : 1,
-      price: Number.isFinite(price) ? price : total,
-      total,
-    });
-  });
-
-  // Способ 2 (основной): текстовый дамп чека в <pre> панели #collapse3.
-  // Таблица в статическом HTML пуста — её рендерит Knockout.js на клиенте.
-  // Название товара и числа могут быть на разных строках.
-  if (items.length === 0) {
-    const receiptText = $("#collapse3 pre").text() || $("#PrintInvoice").text() || $("body").text();
-    const lines = receiptText
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    let inItems = false;
-    let pendingName = "";
-
-    const pushItem = (name, priceRaw, qtyRaw, totalRaw) => {
-      const total = parseSerbianNumber(totalRaw);
-      const price = parseSerbianNumber(priceRaw);
-      const qty = parseSerbianNumber(qtyRaw);
-      if (!Number.isFinite(total) || total <= 0) return;
-      items.push({
-        name: name.trim(),
-        qty: Number.isFinite(qty) ? qty : 1,
-        price: Number.isFinite(price) ? price : total,
-        total,
-      });
-    };
-
-    for (const line of lines) {
-      if (!inItems) {
-        if (/Назив|Name/i.test(line) && /Цена|Price/i.test(line)) inItems = true;
-        continue;
-      }
-
-      if (/Укупан износ|Total amount|Порез|Tax/i.test(line)) break;
-      if (/^-{3,}|={3,}/.test(line)) continue;
-
-      // Три числа на отдельной строке: "<цена> <кол-во> <итог>"
-      const numbersMatch = line.match(/^([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)$/);
-      if (
-        numbersMatch &&
-        looksLikeNumber(numbersMatch[1]) &&
-        looksLikeNumber(numbersMatch[2]) &&
-        looksLikeNumber(numbersMatch[3])
-      ) {
-        pushItem(pendingName || line, numbersMatch[1], numbersMatch[2], numbersMatch[3]);
-        pendingName = "";
-        continue;
-      }
-
-      // Всё в одной строке: "<название> <цена> <кол-во> <итог>"
-      const itemMatch = line.match(/^(.+?)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)$/);
-      if (
-        itemMatch &&
-        looksLikeNumber(itemMatch[2]) &&
-        looksLikeNumber(itemMatch[3]) &&
-        looksLikeNumber(itemMatch[4])
-      ) {
-        pushItem(itemMatch[1], itemMatch[2], itemMatch[3], itemMatch[4]);
-        pendingName = "";
-        continue;
-      }
-
-      pendingName = pendingName ? `${pendingName} ${line}` : line;
-    }
-  }
-
-  return { dateTime, items, total: items.reduce((sum, item) => sum + item.total, 0) };
-}
-
-// --- Gemini: категоризация позиций ---
-async function categorizeReceiptItems(items, categoriesList, categoryCache = {}) {
-  if (items.length === 0) return [];
-
-  // Кэш сопоставлений «товар -> категория» (экономия токенов Gemini).
-  // Ключ — нормализованное имя товара (lowercase, trimmed).
-  const normalize = (name) => String(name || "").toLowerCase().replace(/\s+/g, " ").trim();
-
-  // Финальная сборка ответа: для позиций без категории (Gemini вернул null /
-  // упал / нет ключа) применяем базовый словарь — и только потом сбрасываем в null
-  const withFallback = (results) =>
-    results.map(({ item, category }) => ({
-      ...item,
-      category: category ?? fallbackCategoryFor(item.name, categoriesList),
-    }));
-
-  // Сначала подставляем категории из кэша — такие позиции в Gemini не уходят
-  const resolved = items.map((item) => {
-    const cachedCategory = categoryCache[normalize(item.name)] ?? null;
-    return {
-      item,
-      category: cachedCategory && categoriesList.includes(cachedCategory) ? cachedCategory : null,
-    };
-  });
-
-  const uncached = resolved.filter((entry) => entry.category === null);
-
-  // Всё уже в кэше — Gemini не нужен вовсе
-  if (uncached.length === 0) {
-    return withFallback(resolved);
-  }
-
-  if (!process.env.GEMINI_API_KEY || categoriesList.length === 0) {
-    return withFallback(resolved);
-  }
-
-  const prompt = [
-    `Разбей список товаров из сербского чека по категориям: ${JSON.stringify(categoriesList)}.`,
-    "Каждой позиции присвой ровно одну категорию из списка; если ничего не подходит — null.",
-    "Верни СТРОГО JSON-массив объектов {name, qty, price, total, category} — без markdown, пояснений и любого другого текста.",
-    // Важно: отправляем ТОЛЬКО позиции, которых нет в кэше
-    `Товары: ${JSON.stringify(uncached.map((entry) => entry.item))}`,
-  ].join("\n");
-
-  // Модель из env, иначе актуальный дефолт. Если модель снята с поддержки (404),
-  // пробуем рекомендованную — автокатегоризация не отвалится при deprecation.
-  const models = [...new Set([process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL, DEFAULT_GEMINI_MODEL])];
-  const allowed = new Set(categoriesList);
-  let lastError;
-
-  for (const modelName of models) {
-    try {
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      // GEMINI_BASE_URL — опциональный override (используется в тестах/прокси); в production не нужен
-      const model = genAI.getGenerativeModel(
-        {
-          model: modelName,
-          generationConfig: { temperature: 0, responseMimeType: "application/json" },
-        },
-        process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : undefined,
-      );
-
-      const result = await model.generateContent(prompt);
-      const parsed = JSON.parse(result.response.text() || "[]");
-
-      // Мержим категории от LLM: ответы приходят только для некэшированных позиций
-      // (тот же порядок, что и в списке uncached), закэшированные уже проставлены
-      let aiIndex = 0;
-      return withFallback(
-        resolved.map(({ item, category }) => {
-          if (category !== null) {
-            return { item, category };
-          }
-          const aiItem = parsed[aiIndex++];
-          const aiCategory = typeof aiItem?.category === "string" ? aiItem.category : null;
-          return { item, category: aiCategory && allowed.has(aiCategory) ? aiCategory : null };
-        }),
-      );
-    } catch (error) {
-      lastError = error;
-      console.error(`Gemini model "${modelName}" failed:`, error instanceof Error ? error.message : error);
-    }
-  }
-
-  console.error("Gemini categorization failed for all models:", lastError instanceof Error ? lastError.message : lastError);
-  return withFallback(resolved.map(({ item }) => ({ item, category: null })));
 }
 
 // --- Vercel handler ---
@@ -375,10 +230,9 @@ export default async function handler(req, res) {
       return send(502, { error: `Сайт чека вернул ошибку: HTTP ${response.status}` });
     }
 
-    const html = await response.text();
-    const receipt = parseReceiptHtml(html);
-
-    if (!receipt.dateTime && receipt.items.length === 0) {
+    // Сырой текст страницы чека -> единственный вызов Gemini (разбор + категоризация)
+    const receiptText = extractReceiptText(await response.text());
+    if (!receiptText) {
       return send(422, { error: "Не удалось распознать структуру чека" });
     }
 
@@ -388,17 +242,25 @@ export default async function handler(req, res) {
         ? body.categories.map(String)
         : DEFAULT_CATEGORIES;
 
-    const items = await categorizeReceiptItems(
-      receipt.items,
-      categoriesList,
-      // Кэш сопоставлений «товар -> категория» от клиента (Firestore клиента):
-      // закэшированные позиции категоризируются без обращения к Gemini
-      typeof body.categoryCache === "object" && body.categoryCache !== null ? body.categoryCache : {},
-    );
-
-    return send(200, { dateTime: receipt.dateTime, items, total: receipt.total });
+    try {
+      const receipt = await parseReceiptWithGemini(receiptText, categoriesList);
+      if (receipt.items.length === 0) {
+        return send(422, { error: "Не удалось распознать структуру чека" });
+      }
+      return send(200, receipt);
+    } catch (error) {
+      const status = error?.status === 503 ? 503 : 502;
+      console.error("Gemini receipt parsing failed:", error instanceof Error ? error.message : error);
+      return send(status, {
+        error:
+          status === 503
+            ? "Распознавание чеков недоступно: не задан ключ Gemini (GEMINI_API_KEY)"
+            : "Сервис распознавания чеков вернул ошибку, попробуйте позже",
+      });
+    }
   } catch (error) {
     console.error("parse-receipt unexpected error:", error);
     return send(500, { error: "Внутренняя ошибка сервера" });
   }
 }
+

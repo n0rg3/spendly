@@ -33,19 +33,5 @@ service cloud.firestore {
         allow update, delete: if documentId() == userId;
       }
     }
-
-    // ===== Кэш категорий товаров (экономия токенов Gemini) =====
-    // Корневая коллекция: item_category_cache/{telegramId}, поле items = {товар -> категория}
-    // Читается и сервером (admin SDK игнорирует правила), и клиентом перед запросом чека
-    match /item_category_cache/{userId} {
-      allow read: if documentId() == userId;
-      allow create: if documentId() == userId
-        && request.resource.data.keys().hasOnly(['items'])
-        && request.resource.data.items is map;
-      // update с merge:true — клиент и API дописывают новые сопоставления
-      allow update: if documentId() == userId
-        && request.resource.data.items is map;
-      allow delete: if documentId() == userId;
-    }
   }
 }
