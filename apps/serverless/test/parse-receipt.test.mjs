@@ -147,6 +147,16 @@ test("GEMINI_MODEL переопределяет модель по умолчан
   assert.match(geminiUrl, /models\/gemini-2\.5-flash-lite:generateContent/);
 });
 
+test("без categories используется список по умолчанию — и он же уходит в схему", async () => {
+  resetAi();
+  await invoke({ body: { qrUrl: QR_URL } });
+
+  assert.deepEqual(
+    geminiRequest.generationConfig.responseSchema.properties.items.items.properties.category.enum,
+    ["Продукты", "Тусичи", "Дом", "Транспорт", "Развлечения", "Остальное"],
+  );
+});
+
 test("категория не из списка пользователя сбрасывается в null", async () => {
   resetAi();
   const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Еда"] } });

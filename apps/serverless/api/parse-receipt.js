@@ -236,11 +236,16 @@ export default async function handler(req, res) {
       return send(422, { error: "Не удалось распознать структуру чека" });
     }
 
-    // Категории пользователя опциональны; по умолчанию — фиксированный список из ТЗ
-    const categoriesList =
-      Array.isArray(body.categories) && body.categories.length > 0
-        ? body.categories.map(String)
-        : DEFAULT_CATEGORIES;
+    // Категории пользователя опциональны; по умолчанию — фиксированный список из ТЗ.
+    // Пустой список — тревожный признак: категории из ответа модели не сматчатся
+    // с категориями пользователя, поэтому такой случай пишем в лог
+    const categoriesFromClient = Array.isArray(body.categories)
+      ? body.categories.map(String).filter(Boolean)
+      : [];
+    if (categoriesFromClient.length === 0) {
+      console.warn("parse-receipt: клиент не передал categories — используется список по умолчанию");
+    }
+    const categoriesList = categoriesFromClient.length > 0 ? categoriesFromClient : DEFAULT_CATEGORIES;
 
     try {
       const receipt = await parseReceiptWithGemini(receiptText, categoriesList);

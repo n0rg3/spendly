@@ -722,11 +722,19 @@ app.post<{ Body: { qrUrl?: string; categories?: string[] } }>("/api/receipts/par
     return reply.code(422).send({ error: "Не удалось распознать структуру чека" });
   }
 
-  // Категории пользователя опциональны; по умолчанию — фиксированный список из ТЗ
+  // Категории: приоритет — явный список из запроса, иначе категории пользователя
+  // из его дашборда (сервер знает их точно — страховка от «устаревшего» state
+  // на клиенте), и только затем фиксированный список из ТЗ
+  const requestedCategories = Array.isArray(request.body?.categories)
+    ? request.body.categories.map(String).filter(Boolean)
+    : [];
+  const dashboardCategories = request.dashboard.categories.map((category) => category.name);
   const categoriesList =
-    Array.isArray(request.body?.categories) && request.body.categories.length > 0
-      ? request.body.categories.map(String)
-      : DEFAULT_RECEIPT_CATEGORIES;
+    requestedCategories.length > 0
+      ? requestedCategories
+      : dashboardCategories.length > 0
+        ? dashboardCategories
+        : DEFAULT_RECEIPT_CATEGORIES;
 
   try {
     const receipt = await parseReceiptWithGemini(receiptText, categoriesList);

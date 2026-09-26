@@ -234,6 +234,18 @@ function currentMonthKey() {
 // Разбор чека целиком делает Gemini на сервере и отдаёт dateTime уже в ISO 8601,
 // поэтому на клиенте не осталось ни регэкспов формата сербского чека, ни кэша категорий.
 
+// Дебаунс повторных срабатываний QR-сканера и таймаут ожидания ответа распознавания
+const PARSE_DEBOUNCE_MS = 300;
+const PARSE_TIMEOUT_MS = 45_000;
+
+// Разобранный чек: позиции приходят вместе со своими категориями одним объектом,
+// поэтому обновление состояния — атомарное (один setState на весь результат)
+type ParsedReceiptPayload = {
+  dateTime: string | null;
+  items: { name: string; qty: number; price: number; total: number; category: string | null }[];
+  total: number;
+};
+
 // Безопасно приводит dateTime от сервера к ISO; невалидное значение -> null
 function receiptDateToIso(value: string | null): string | null {
   if (!value) return null;
@@ -1211,76 +1223,169 @@ useEffect(() => {
     return () => document.removeEventListener("keydown", onKey);
   }, [isAddMenuOpen]);
 
-  // ===== Нативный QR-сканер Telegram + парсинг чека =====
+  // ===== Нативный QR-сканер Telegram + распознавание чека через Gemini =====
   const [isReceiptLoading, setIsReceiptLoading] = useState(false);
-  const [parsedReceipt, setParsedReceipt] = useState<{
-    dateTime: string | null;
-    items: { name: string; qty: number; price: number; total: number; category: string | null }[];
-    total: number;
-  }>();
+  const [parsedReceipt, setParsedReceipt] = useState<ParsedReceiptPayload>();
   const [receiptError, setReceiptError] = useState<string>();
 
-  const parseReceipt = async (receiptUrl: string) => {
+  // Актуальные категории без «устаревшего» state: ref следит за дашбордом и всегда
+  // отдаёт последние данные, даже если рендер с новым state ещё не произошёл.
+  // Это и была причина «категории определяются со 2-3 раза»: первый скан успевал уйти
+  // до загрузки дашборда, `categories` были пустыми, сервер подставлял дефолтный список
+  // из ТЗ, и названия категорий не совпадали с категориями пользователя.
+  const dashboardRef = useRef<Dashboard | undefined>(undefined);
+  useEffect(() => {
+    dashboardRef.current = dashboard;
+  }, [dashboard]);
+
+  // Управление запросом распознавания: отмена зависших, защита от гонки и спама
+  const parseAbortRef = useRef<AbortController | null>(null);
+  const parseRequestIdRef = useRef(0);
+  const lastParseAtRef = useRef(0);
+
+  // Категории пользователя ждём явно: Firestore может отдать дашборд с задержкой.
+  // Читаем ref (актуальное значение), а не state — не зависим от момента перерендера.
+  const waitForUserCategories = async (timeoutMs = 5000): Promise<string[]> => {
+    const startedAt = Date.now();
+    for (;;) {
+      const names = dashboardRef.current?.categories.map((category) => category.name) ?? [];
+      if (names.length > 0) return names;
+      if (Date.now() - startedAt >= timeoutMs) {
+        console.warn(`[AI Parse] категории пользователя не загрузились за ${timeoutMs} мс`);
+        return [];
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+  };
+
+  // Запрос к API: ВСЕ данные приходят аргументами — внутри ничего не читается из state
+  const requestReceipt = async (qrUrl: string, categories: string[], signal: AbortSignal) => {
+    // --- Адрес API (serverless-функция на Vercel) ---
+    // VITE_API_URL задаётся при сборке (см. apps/mini-app/.env):
+    //   production (GitHub Pages): https://<project>.vercel.app
+    //   dev: пусто -> vite проксирует /api -> http://localhost:3001
+    // Клиент НИКОГДА не обращается к localhost, если открыт не на localhost.
+    const isLocalPage = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+    const apiUrl = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
+
+    if (!apiUrl) {
+      if (!isLocalPage) {
+        throw new Error(t("apiNotConfigured"));
+      }
+      console.info("[receipt] VITE_API_URL пуст — dev-режим, запрос через vite-прокси /api -> localhost:3001");
+    } else if (/change-me|your-app|example\.com/i.test(apiUrl)) {
+      throw new Error(t("apiPlaceholder", { url: apiUrl }));
+    } else if (!isLocalPage && /^(https?:\/\/)?(localhost|127\.0\.0\.1)/i.test(apiUrl)) {
+      throw new Error(t("apiLocalhost", { url: apiUrl }));
+    }
+
+    // Тело запроса формируется из аргументов: на первом же вызове на сервер уходят
+    // и реальный QR, и РЕАЛЬНЫЕ категории пользователя
+    const requestBody = { qrUrl, categories };
+    console.log("[AI Parse Sent]:", requestBody);
+
+    const response = await fetch(`${apiUrl}/api/receipts/parse`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // Совместимость, если VITE_API_URL указывает на ngrok Free (interstitial-страница).
+        // На Vercel-функции заголовок просто игнорируется.
+        "ngrok-skip-browser-warning": "true",
+      },
+      body: JSON.stringify(requestBody),
+      // Отмена устаревшего/зависшего запроса: его ответ не перезапишет свежие данные
+      signal,
+    });
+
+    const payload = (await response.json().catch(() => null)) as (Partial<ParsedReceiptPayload> & { error?: string }) | null;
+
+    if (!response.ok || !payload || !payload.items) {
+      console.error("API Error Details:", { status: response.status, statusText: response.statusText, url: response.url, payload });
+      throw new Error(payload?.error || `Ошибка API: HTTP ${response.status}`);
+    }
+
+    // Позиции + их категории + итог + дата — один объект результата
+    const receipt: ParsedReceiptPayload = {
+      dateTime: payload.dateTime ?? null,
+      items: payload.items,
+      total: payload.total ?? payload.items.reduce((sum, item) => sum + item.total, 0),
+    };
+
+    console.log("[AI Parse Received]:", receipt);
+    return receipt;
+  };
+
+  // Обёртка «handleParse -> parseReceiptApi»: сырые данные идут аргументом, не из state
+  const parseReceiptApi = (qrUrl: string, categories: string[], signal: AbortSignal) =>
+    requestReceipt(qrUrl, categories, signal);
+
+  // Единая точка запуска распознавания: дебаунс + отмена предыдущего запроса + лоадер
+  const handleParse = async (qrUrl: string) => {
+    // 1) Дебаунс: сканер может прислать один и тот же QR несколько раз подряд
+    const now = Date.now();
+    if (now - lastParseAtRef.current < PARSE_DEBOUNCE_MS) {
+      console.log("[AI Parse] повторный скан проигнорирован (дебаунс)");
+      return;
+    }
+    lastParseAtRef.current = now;
+
+    // 2) Отменяем незавершённый запрос: старый ответ не должен перезаписать свежий
+    if (parseAbortRef.current) {
+      console.log("[AI Parse] отменяю предыдущий запрос");
+      parseAbortRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    parseAbortRef.current = controller;
+    const requestId = ++parseRequestIdRef.current;
+
+    // 3) Лоадер на время запроса — повторные клики заблокированы (см. disabled у кнопок)
     setIsReceiptLoading(true);
     setReceiptError(undefined);
+
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, PARSE_TIMEOUT_MS);
+
     try {
-      // --- Адрес API (serverless-функция на Vercel) ---
-      // VITE_API_URL задаётся при сборке (см. apps/mini-app/.env):
-      //   production (GitHub Pages): https://<project>.vercel.app
-      //   dev: пусто -> vite проксирует /api -> http://localhost:3001
-      // Клиент НИКОГДА не обращается к localhost, если открыт не на localhost.
-      const isLocalPage = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-      const apiUrl = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
+      // Категории пользователя берём до запроса: если Firestore ещё не отдал дашборд,
+      // Gemini вернул бы свои дефолтные названия, и позиции остались бы без категорий
+      const categories = await waitForUserCategories();
+      if (requestId !== parseRequestIdRef.current) return;
 
-      if (!apiUrl) {
-        if (!isLocalPage) {
-          throw new Error(t("apiNotConfigured"));
-        }
-      } else if (/change-me|your-app|example\.com/i.test(apiUrl)) {
-        throw new Error(t("apiPlaceholder", { url: apiUrl }));
-      } else if (!isLocalPage && /^(https?:\/\/)?(localhost|127\.0\.0\.1)/i.test(apiUrl)) {
-        throw new Error(t("apiLocalhost", { url: apiUrl }));
+      const receipt = await parseReceiptApi(qrUrl, categories, controller.signal);
+
+      // 4) Гонка: пока шёл запрос, мог стартовать более новый — устаревший ответ отбрасываем
+      if (requestId !== parseRequestIdRef.current) {
+        console.log("[AI Parse] устаревший ответ отброшен");
+        return;
       }
 
-      if (!apiUrl) {
-        console.info("[receipt] VITE_API_URL пуст — dev-режим, запрос через vite-прокси /api -> localhost:3001");
-      }
-
-      const response = await fetch(`${apiUrl}/api/receipts/parse`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // Совместимость, если VITE_API_URL указывает на ngrok Free (interstitial-страница).
-          // На Vercel-функции заголовок просто игнорируется.
-          "ngrok-skip-browser-warning": "true",
-        },
-        // На сервер уходят только QR-ссылка и категории пользователя: разбор чека
-        // и автокатегоризацию делает один вызов Gemini 2.5 Flash
-        // (если категории не передать, функция использует дефолтный список из ТЗ)
-        body: JSON.stringify({
-          qrUrl: receiptUrl,
-          categories: dashboard?.categories.map((c) => c.name),
-        }),
-      });
-
-      const payload = (await response.json().catch(() => null)) as { error?: string; dateTime?: string | null; items?: { name: string; qty: number; price: number; total: number; category: string | null }[]; total?: number } | null;
-
-      if (!response.ok || !payload || !payload.items) {
-        console.error("API Error Details:", { status: response.status, statusText: response.statusText, url: response.url, payload });
-        throw new Error(payload?.error || `Ошибка API: HTTP ${response.status}`);
-      }
-
-      setParsedReceipt({
-        dateTime: payload.dateTime ?? null,
-        items: payload.items,
-        total: payload.total ?? payload.items.reduce((sum, item) => sum + item.total, 0),
-      });
+      // 5) Атомарное обновление: позиции вместе со своими категориями приходят одним
+      // объектом, черновики правок сбрасываются в том же батче React — один перерендер
+      setParsedReceipt(receipt);
+      setReceiptDrafts({});
     } catch (error) {
+      const isAbort = error instanceof Error && error.name === "AbortError";
+      if (isAbort) {
+        console.log("[AI Parse] запрос отменён");
+        if (timedOut && requestId === parseRequestIdRef.current) {
+          setReceiptError(t("receiptLoadError"));
+        }
+        return;
+      }
       console.error("API Error Details:", error);
       console.error("API Error Message:", error instanceof Error ? error.message : String(error));
       setReceiptError(error instanceof Error ? error.message : t("receiptLoadError"));
     } finally {
-      setIsReceiptLoading(false);
+      window.clearTimeout(timeoutId);
+      // Флаги снимает только владелец последнего запроса — иначе лоадер «залипнет»
+      if (requestId === parseRequestIdRef.current) {
+        parseAbortRef.current = null;
+        setIsReceiptLoading(false);
+      }
     }
   };
 
@@ -1291,7 +1396,8 @@ useEffect(() => {
     telegram?.offEvent("qrTextReceived", handleQrReceived);
     telegram?.offEvent("scanQrPopupClosed", handleReceiptScanClosed);
     telegram?.closeScanQrPopup?.();
-    void parseReceipt(receiptUrl);
+    // Данные передаются напрямую из события (сырой QR), а не читаются из state
+    void handleParse(receiptUrl);
   };
 
   // Попап нативного сканера закрыт без результата — снимаем подписки,
@@ -1325,11 +1431,15 @@ useEffect(() => {
     if (draftAmount !== undefined && Number.isFinite(draftAmount) && draftAmount > 0) return draftAmount;
     return parsedReceipt?.items[index]?.total ?? 0;
   };
+  // Категория из ответа модели -> id категории пользователя. Сравниваем без учёта
+  // регистра и пробелов: даже если модель вернёт «Продукты » вместо «Продукты»,
+  // позиция всё равно получит нужную категорию
   const receiptItemCategoryId = (index: number) => {
     const draftId = receiptDrafts[index]?.categoryId;
     if (draftId !== undefined) return draftId;
-    const aiName = parsedReceipt?.items[index]?.category;
-    return dashboard?.categories.find((c) => c.name === aiName)?.id ?? "";
+    const aiName = parsedReceipt?.items[index]?.category?.trim().toLowerCase();
+    if (!aiName) return "";
+    return dashboard?.categories.find((c) => c.name.trim().toLowerCase() === aiName)?.id ?? "";
   };
 
   // «Сохранить все траты»: создаёт отдельную трату на каждую позицию чека
@@ -1374,6 +1484,11 @@ useEffect(() => {
 
   const startQrScan = () => {
     closeAddMenu();
+    // Пока идёт распознавание, повторный запуск блокируем (лоадер уже на экране)
+    if (isReceiptLoading) {
+      console.log("[AI Parse] распознавание уже идёт — повторный запуск заблокирован");
+      return;
+    }
     if (!telegram?.showScanQrPopup) {
       console.warn("QR-сканер недоступен: откройте Mini App в Telegram");
       return;
@@ -2629,6 +2744,7 @@ useEffect(() => {
               type="button"
               className="add-menu-item"
               onClick={startQrScan}
+              disabled={isReceiptLoading}
             >
               {t("scanReceipt")}
             </button>
