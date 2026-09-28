@@ -140,9 +140,18 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 
 .screen-copy { margin: -10px 1px 22px; color: var(--hint-color); font-size: 15px; line-height: 1.45; }
 
+/* ===== Слои (z-index) =====
+   1     — sticky-график
+   20    — выпадающий список месяца/года
+   50    — нижняя навигация
+   100   — модальные окна и их бэкдропы (всегда поверх выпадающих списков экрана)
+   2000  — меню «+» (iOS action sheet) поверх всего
+   Выпадающие списки внутри модалок (.icon-dropdown-panel и т.п.) живут в своём
+   контексте слоя модалки, поэтому их собственные значения на шкалу не влияют. */
+
 .month-control {
   position: relative;
-  z-index: 50; /* выпадающее меню не проваливается под sticky-график */
+  z-index: 20; /* выпадающее меню не проваливается под sticky-график, но всегда под модалками */
 }
 .month-picker {
   position: relative;
@@ -179,7 +188,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 
 .month-menu {
   position: absolute;
-  z-index: 50;
+  z-index: 20;
   top: calc(100% + 8px);
   left: 0;
   display: grid;
@@ -495,7 +504,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
 
 .modal-backdrop {
   position: fixed;
-  z-index: 20;
+  z-index: 100; /* модалка всегда поверх экрана: выпадающих месяцев, графика и навигации */
   inset: 0;
   display: grid;
   align-items: end;
@@ -530,7 +539,11 @@ input:focus, select:focus { border-color: var(--accent-color); }
   justify-content: center;
 }
 
-.expense-modal button[type="submit"] {
+/* Акцентная кнопка. Не каждая кнопка-подтверждение в модалке имеет type="submit"
+   (например, «Понятно» в окне ошибки распознавания чека), поэтому единый синий вид
+   задаём классом, а не типом — иначе такая кнопка остаётся светлой с нечитаемым текстом */
+.expense-modal button[type="submit"],
+.expense-modal button.primary-button {
   color: var(--button-text-color, #ffffff);
   background: var(--button-color);
 }
@@ -576,6 +589,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
 }
 
 .expense-modal--plain button[type="submit"],
+.expense-modal--plain button.primary-button,
 .expense-modal--plain button.danger-button {
   font-weight: 400;
   text-align: center;
@@ -656,7 +670,7 @@ input:focus, select:focus { border-color: var(--accent-color); }
 .chart-tab { display: flex; flex-direction: column; gap: 14px; }
 
 /* Диаграмма зафиксирована сверху: прилипает к верху скролл-области main.
-   z-index ниже, чем у селектора месяца (.month-control z-50), — иначе
+   z-index ниже, чем у селектора месяца (.month-control z-20), — иначе
    выпадающий список месяцев проваливается под карточку графика */
 .chart-card--sticky {
   position: sticky;
@@ -885,10 +899,12 @@ nav:not(.floating-tab-bar) button.active { color: var(--link-color); }
   }
 }
 
-/* ===== Floating Tab Bar (SVG-фон с плавной выемкой вокруг FAB) ===== */
+/* ===== Floating Tab Bar (SVG-фон с плавной выемкой вокруг FAB) =====
+   z-index 50: выше контента и выпадающего месяца (20), но ниже модалок (100) —
+   открытая модалка перекрывает навигацию, и тапы по вкладкам не уходят под бэкдроп */
 .floating-tab-bar {
   position: fixed;
-  z-index: 1000;
+  z-index: 50;
   left: 12px;
   right: 12px;
   bottom: calc(12px + env(safe-area-inset-bottom));

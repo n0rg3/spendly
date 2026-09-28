@@ -602,9 +602,16 @@ useEffect(() => {
     }
   }, [expenseCategory]);
 
-  // Уход с экрана аналитики (тапы по нижней навигации вне main) снимает выбор
+  // Смена вкладки возвращает экраны в исходное состояние: снимается выбранная категория
+  // на графике и сворачиваются категории с раскрытым списком покупок. Иначе при возврате
+  // на вкладку пользователь видит «залипший» раскрытый список из прошлого экрана.
+  // Выпадающий месяц/год закрывается здесь же: тап по вкладке не попадает в onClick у main,
+  // который закрывает его при тапе по самому экрану.
   useEffect(() => {
     if (activeTab !== "chart") setSelectedCategoryId(undefined);
+    setExpandedAccId(new Set());
+    setShowMonthPicker(false);
+    setIconPickerOpen(false);
   }, [activeTab]);
 
   const insertOperator = (op: string) => {
@@ -2584,7 +2591,7 @@ useEffect(() => {
         <div className="modal-backdrop" onClick={() => setReceiptError(undefined)}>
           <div className="expense-modal expense-modal--plain" onClick={(e) => e.stopPropagation()}>
             <p className="receipt-error-text">{receiptError}</p>
-            <button type="button" onClick={() => setReceiptError(undefined)}>{t("okGotIt")}</button>
+            <button type="button" className="primary-button" onClick={() => setReceiptError(undefined)}>{t("okGotIt")}</button>
           </div>
         </div>
       )}
