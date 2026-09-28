@@ -2304,6 +2304,8 @@ useEffect(() => {
                   className={`category-icon-button${isSelected ? " selected" : ""}`}
                   key={category.id}
                   aria-pressed={isSelected}
+                  // Оттенок категории рамкой плитки (тот же, что у сектора диаграммы)
+                  style={{ "--category-color": categoryColor.chart } as CSSProperties}
                   onPointerDown={() => startCategoryPress(category)}
                   onPointerUp={endCategoryPress}
                   onPointerCancel={endCategoryPress}
@@ -2318,19 +2320,15 @@ useEffect(() => {
                     toggleCategorySelection(category.id);
                   }}
                 >
+                  {/* Иконка стоит прямо на фоне карточки: подложки под ней нет */}
                   <span className="category-icon-wrapper">
                     <Icon name={category.icon || "other"} />
                   </span>
-                  {/* Цвет категории на плитке несёт только эта точка: тот же оттенок,
-                      что у сектора диаграммы и у карточки в списке трат */}
-                  <span className="category-tile-label">
-                    <span className="category-legend-dot" style={{ background: categoryColor.chart }} />
-                    <b>{category.name}</b>
-                  </span>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
+                  <b>{category.name}</b>
+                  <div className="category-tile-amount">
                     <small>{formatMoney(categoryStat?.amount ?? 0)}</small>
                     {category.budgets?.[selectedMonth] && (
-                      <small style={{ fontSize: '9px', opacity: 0.8 }}>{t("budgetFrom", { amount: formatMoney(category.budgets[selectedMonth]) })}</small>
+                      <small>{t("budgetFrom", { amount: formatMoney(category.budgets[selectedMonth]) })}</small>
                     )}
                   </div>
                 </button>
@@ -2348,7 +2346,10 @@ useEffect(() => {
               >
                 <span><Icon name="plus" /></span>
                 <b>{t("add")}</b>
-                <small style={{ fontSize: '9px' }}>{'\u00A0'}</small>
+                {/* Пустой блок суммы: держит высоту плитки такой же, как у категорий */}
+                <div className="category-tile-amount" aria-hidden="true">
+                  <small>&nbsp;</small>
+                </div>
               </button>
             </div>
           </section>

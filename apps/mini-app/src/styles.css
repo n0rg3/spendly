@@ -208,41 +208,27 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .month-total b { margin-top: 3px; color: var(--link-color); font-size: 16px; letter-spacing: -.3px; }
 
 .category-icon-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 10px; }
-/* Плитка категории: обычная карточка — нейтральная рамка и фон темы, без
-   цветной обводки и без плашки под иконкой. Цвет категории на плитке несёт
-   только маленькая точка рядом с названием (тот же оттенок, что у сектора
-   диаграммы и у карточки в списке трат). */
+/* Плитка категории: карточка с цветной обводкой 2px в оттенке категории и обычным
+   фоном темы. Подложки под иконкой нет — глиф стоит прямо на фоне карточки.
+   Оттенок задаётся переменной --category-color (её ставит разметка плитки). */
 .category-icon-button {
   display: grid;
-  gap: 5px;
+  gap: 6px;
+  align-content: start;
   justify-items: center;
   min-width: 0;
-  padding: 12px 6px 10px;
+  padding: 12px 8px 12px;
   border-radius: 18px;
-  /* Нейтральная рамка в цвет темы — шириной 2px, чтобы размер плитки не «прыгал» */
-  border: 2px solid var(--border-color);
+  /* Рамка 2px — исходный габарит плитки: без неё карточки «сжимаются» на 4px */
+  border: 2px solid var(--category-color, var(--border-color));
   background: var(--secondary-bg-color);
   color: var(--text-color);
   text-align: center;
   transition: transform .15s ease, box-shadow .15s ease;
 }
 
-.category-icon-button > span {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 10px;
-  /* Подложки под иконкой нет — глиф рисуется цветом текста */
-  background: transparent;
-  font-size: 20px;
-  font-weight: 800;
-  color: inherit;
-  transition: transform .15s ease;
-}
-
-/* Обёртка иконки категории: без заливки и без рамки — под иконкой только фон
-   страницы, а единственный цветной элемент — внешний контур плитки */
+/* Под иконкой НИКАКОЙ подложки: ни заливки, ни рамки — только фон карточки */
+.category-icon-button > span,
 .category-icon-wrapper {
   display: grid;
   width: 34px;
@@ -257,29 +243,33 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   transition: transform .15s ease;
 }
 
-/* Цвет текста задаём явно: глобальное правило small { color: var(--hint-color) }
-   дало бы приглушённо-серые суммы — наследуем цвет текста плитки */
-/* Подпись плитки: цветная точка + название в один ряд. Селектор с классом и `>`
-   перебивает базовое `.category-icon-button > span` (34×34 — это размер под иконку) */
-.category-icon-button > .category-tile-label {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
+/* Название категории: показываем целиком, переносом на две строки. Раньше здесь
+   стояли nowrap + ellipsis, и длинные названия обрезались многоточием */
+.category-icon-button b {
   width: 100%;
-  height: auto;
   min-width: 0;
-  border-radius: 0;
-  place-items: normal;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.25;
+  color: inherit;
+  overflow-wrap: anywhere;
 }
-.category-icon-button > .category-tile-label b { width: auto; min-width: 0; }
 
-.category-icon-button b { width: 100%; overflow: hidden; font-size: 11px; font-weight: 650; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
-.category-icon-button small { margin-top: -2px; font-size: 10px; font-weight: 650; color: inherit; opacity: .85; }
-/* Выбранная категория (её часть увеличена на диаграмме): рамка и подложка
-   остаются нейтральными, акцент даёт увеличенная иконка. Правило идёт до
-   :active, чтобы нажатие всё ещё давало отклик сжатием */
-.category-icon-button.selected { border-color: var(--hint-color); background: color-mix(in srgb, var(--text-color) 5%, var(--secondary-bg-color)); }
+/* Сумма и плановый лимит: колонкой по центру, без отрицательного отступа
+   (он наезжал на название) */
+.category-icon-button small {
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+  color: inherit;
+  opacity: .85;
+}
+.category-tile-amount { display: grid; justify-items: center; gap: 2px; width: 100%; min-width: 0; }
+.category-tile-amount small { max-width: 100%; overflow-wrap: anywhere; }
+
+/* Выбранная категория (её сектор увеличен на диаграмме): цветная рамка остаётся,
+   акцент даёт лёгкая заливка оттенком категории и увеличенная иконка */
+.category-icon-button.selected { background: color-mix(in srgb, var(--category-color, var(--text-color)) 12%, var(--secondary-bg-color)); }
 .category-icon-button.selected > .category-icon-wrapper { transform: scale(1.06); }
 .category-icon-button:active > .category-icon-wrapper { transform: scale(.92); }
 
