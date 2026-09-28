@@ -35,6 +35,7 @@ let geminiStatus = 200;
 let receiptHtmlOverride = null;
 let receiptFails = 0;
 let geminiFails = 0;
+let geminiFailStatus = 500; // статус для падающих попыток (503 — перегрузка, 404 — снятая модель)
 let geminiCalls = 0;
 let receiptCalls = 0;
 
@@ -57,7 +58,7 @@ globalThis.fetch = async (url, options) => {
       geminiFails -= 1;
       return {
         ok: false,
-        status: 500,
+        status: geminiFailStatus,
         statusText: "Error",
         json: async () => ({ error: { message: "mock gemini error" } }),
       };
@@ -100,6 +101,7 @@ function resetAi({ apiKey = "test-key" } = {}) {
   receiptHtmlOverride = null;
   receiptFails = 0;
   geminiFails = 0;
+  geminiFailStatus = 500;
   geminiCalls = 0;
   receiptCalls = 0;
 }
@@ -150,7 +152,7 @@ test("в Gemini уходит сырой текст чека и JSON-схема (
   await invoke({ body: { qrUrl: QR_URL, categories: ["Еда", "Транспорт"] } });
 
   // Модель по умолчанию — Gemini 2.5 Flash
-  assert.match(geminiUrl, /models\/gemini-2\.5-flash:generateContent/);
+  assert.match(geminiUrl, /models\/gemini-3\.8-flash:generateContent/);
 
   const { generationConfig } = geminiRequest;
   assert.equal(generationConfig.responseMimeType, "application/json");
@@ -346,6 +348,39 @@ test("ни qrUrl, ни text — понятная ошибка 400", async () => 
   assert.equal(status, 400);
   assert.match(body.error, /qrUrl/);
   assert.match(body.error, /text/);
+});
+
+test("перегрузка моделей (503 от всех) — 3 попытки на 3 разных модели, затем «перегружен»", async () => {
+  resetAi();
+  geminiStatus = 503; // Google отдаёт 503 «high demand» — статус совпадает с «нет ключа», но смысл другой
+  const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Еда"] } });
+
+  assert.equal(status, 503);
+  assert.match(body.error, /перегружен/);
+  assert.doesNotMatch(body.error, /GEMINI_API_KEY/, "это ёмкость Gemini, а не отсутствие ключа");
+  assert.equal(geminiCalls, 3, "пробуем три разные модели, прежде чем сдаться");
+});
+
+test("снятая с продажи модель (404) — уходим на резервную модель и всё равно разбираем чек", async () => {
+  resetAi();
+  geminiFails = 1; // первая (основная) модель отвечает 404
+  geminiFailStatus = 404;
+  const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Продукты", "Дом"] } });
+
+  assert.equal(status, 200, "снятая модель не должна ломать распознавание — есть резервная");
+  assert.equal(geminiCalls, 2, "вторая попытка идёт на другой модели");
+  assert.match(geminiUrl, /models\/gemini-3\.7-flash/, "повтор делаем на резервной модели");
+  assert.deepEqual(body.items.map((i) => i.category), ["Продукты", "Продукты", "Дом"]);
+});
+
+test("снятая с продажи модель у ВСЕХ моделей — 503 с подсказкой про настройки", async () => {
+  resetAi();
+  geminiStatus = 404; // 404 и на основной, и на резервных — чинить нечем
+  const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Еда"] } });
+
+  assert.equal(status, 503);
+  assert.match(body.error, /GEMINI_MODEL/);
+  assert.equal(geminiCalls, 3, "пробуем всю цепочку моделей, дальше — подсказка пользователю");
 });
 
 test("SSRF: разрешены только https-URL на *.purs.gov.rs", async () => {

@@ -199,7 +199,7 @@ cat apps/mini-app/dist/index.html | grep -o 'assets/[^"]*'          # локал
 | Переменная | Обязательна | Описание |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | да | Ключ Gemini (https://aistudio.google.com/apikey). Без него распознавание чеков недоступно (503). |
-| `GEMINI_MODEL` | нет | По умолчанию `gemini-2.5-flash` — модель с поддержкой Structured Outputs (`responseSchema`). |
+| `GEMINI_MODEL` | нет | По умолчанию `gemini-3.8-flash` — модель с поддержкой Structured Outputs (`responseSchema`). Старые ID (например `gemini-2.5-flash`) Google выводит из продажи: вызов снятой модели отдаёт 404 и функция отвечает 502. |
 | `ALLOWED_ORIGINS` | нет | Доп. CORS-источники через запятую. |
 | `GEMINI_BASE_URL` | нет | Только для тестов — подмена базового URL Gemini (стаб/прокси). |
 | `RECEIPT_RETRY_DELAY_MS` | нет | Пауза между повторными попытками при транзиентном сбое (по умолчанию 500 мс; `0` — без паузы, используется в тестах). |

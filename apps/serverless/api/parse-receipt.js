@@ -8,7 +8,7 @@
 // ни словарей-фолбэков, ни кэшей «товар -> категория» больше нет.
 //
 // Env: GEMINI_API_KEY (обязателен — без него распознавание недоступно),
-//      GEMINI_MODEL (по умолчанию gemini-2.5-flash),
+//      GEMINI_MODEL (по умолчанию gemini-3.8-flash),
 //      ALLOWED_ORIGINS (опционально, через запятую — дополнительные CORS-источники).
 import * as cheerio from "cheerio";
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -29,25 +29,42 @@ const DEFAULT_CATEGORIES = DEFAULT_CATEGORIES_BY_LANG.ru;
 const defaultCategoriesForLang = (lang) =>
   DEFAULT_CATEGORIES_BY_LANG[String(lang ?? "").trim().toLowerCase()] ?? DEFAULT_CATEGORIES;
 
-// Модель по умолчанию: Structured Outputs (responseSchema) поддерживается Gemini 2.5 Flash
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+// Модель по умолчанию. Важно: Google снимает модели с продажи, и вызов старой отдаёт
+// 404 "no longer available to new users" — распознавание падает целиком (502).
+// gemini-3.8-flash — модель, которую сам API указывает как актуальную замену 2.5-flash;
+// поддерживает Structured Outputs (responseSchema). Переопределяется GEMINI_MODEL.
+const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 
 // Страница чека может быть большой; модели достаточно текста покупки
 const MAX_RECEIPT_TEXT_LENGTH = 20_000;
 
-// Таймаут запроса страницы чека и один быстрый повтор на транзиентный сбой.
-// Первый (холодный) запрос к сайту чека/Gemini иногда падает — именно поэтому раньше
-// распознавание «срабатывало только со 2-3 раза». Повтор лечит это без участия пользователя.
-// Бюджет времени подобран под maxDuration функции на Vercel (60 с):
-// 12 с × 2 попытки на страницу чека + 15 с × 2 попытки на Gemini ≈ 55 с в худшем случае
-const RECEIPT_FETCH_TIMEOUT_MS = 12_000;
-const GEMINI_TIMEOUT_MS = 15_000;
+// Таймауты подобраны под maxDuration функции на Vercel (60 с). Бюджет в худшем случае:
+// страница чека 10 с × 2 попытки ≈ 21 с + Gemini 11 с × 3 модели ≈ 34 с = ~55 с.
+// Три попытки Gemini — это три РАЗНЫЕ модели (см. FALLBACK_GEMINI_MODELS): повтор той же
+// перегруженной модели бесполезен, а снятую с продажи модель повтор тоже не спасёт.
+const RECEIPT_FETCH_TIMEOUT_MS = 10_000;
+const GEMINI_TIMEOUT_MS = 11_000;
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
-const MAX_ATTEMPTS = 2;
+const MAX_ATTEMPTS = 2; // скачивание страницы чека
+const GEMINI_MAX_ATTEMPTS = 3; // основная модель + две резервные
 // Пауза между попытками; в тестах выключается через RECEIPT_RETRY_DELAY_MS=0
 const retryDelayMs = () => {
   const value = Number(process.env.RECEIPT_RETRY_DELAY_MS);
   return Number.isFinite(value) && value >= 0 ? value : 500;
+};
+
+// Резервные модели. Нужны по двум причинам: Google выводит модели из продажи
+// (404 «no longer available») и периодически отдаёт 503 «high demand». Второй вызов
+// уходит на другую модель — это лечит обе причины, тогда как повтор той же перегруженной
+// модели бесполезен. Две попытки по 15 с = 30 с: вместе со скачиванием чека (12 с + повтор)
+// это влезает в maxDuration: 60.
+const FALLBACK_GEMINI_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash"];
+const geminiModelForAttempt = (attempt) => {
+  const primary = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+  const chain = [primary, ...FALLBACK_GEMINI_MODELS].filter(
+    (name, index, all) => name && all.indexOf(name) === index,
+  );
+  return chain[Math.min(Math.max(attempt, 1) - 1, chain.length - 1)];
 };
 
 // Название категории в сравнимом виде: регистр, пробелы (в т.ч. неразрывные) и Unicode-форма
@@ -61,15 +78,16 @@ function normalizeCategoryName(value) {
     .toLowerCase();
 }
 
-// Один быстрый повтор для транзиентных сбоев (сеть, таймаут, 429/5xx)
-async function withRetry(run, shouldRetry) {
+// Повтор для транзиентных сбоев (сеть, таймаут, 429/5xx). run получает номер попытки
+// (1, 2, 3) — так повтор Gemini уходит на следующую по цепочке модель.
+async function withRetry(run, shouldRetry, { attempts = MAX_ATTEMPTS } = {}) {
   let lastError;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await run();
+      return await run(attempt);
     } catch (error) {
       lastError = error;
-      if (attempt >= MAX_ATTEMPTS || !shouldRetry(error)) throw error;
+      if (attempt >= attempts || !shouldRetry(error)) throw error;
       console.warn(`receipt: попытка ${attempt} не удалась (${error?.message ?? error}) — повтор`);
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs()));
     }
@@ -77,20 +95,37 @@ async function withRetry(run, shouldRetry) {
   throw lastError;
 }
 
+// Статус ошибки. SDK Gemini не всегда отдаёт его числом, но он есть в тексте вида
+// "[404 Not Found]" — без этого разбора снятая модель выглядит как «повтор вообще не поможет».
+const errorStatus = (error) => {
+  const status = error?.status ?? error?.response?.status ?? error?.response?.error?.code;
+  if (typeof status === "number") return status;
+  const match = /\b(\d{3})\b/.exec(String(error?.message ?? ""));
+  if (!match) return null;
+  const code = Number(match[1]);
+  return code >= 400 && code < 600 ? code : null;
+};
+
 // Транзиентная ошибка: сеть/таймаут/5xx/429 — то, что имеет смысл повторить.
 // Ошибки схемы/конфигурации (400/403/404) повторять бессмысленно.
 const isTransient = (error) => {
-  const status = error?.status ?? error?.response?.status ?? error?.response?.error?.code;
-  if (typeof status === "number") return RETRYABLE_STATUS.has(status);
-  // SDK не всегда отдаёт статус числом — ищем его в тексте ошибки
-  const match = /\b(\d{3})\b/.exec(String(error?.message ?? ""));
-  if (match) {
-    const code = Number(match[1]);
-    if (code >= 400 && code < 600) return RETRYABLE_STATUS.has(code);
-  }
-  // Статуса нет вообще (DNS, обрыв соединения, таймаут) — повторяем
-  return true;
+  const code = errorStatus(error);
+  return code === null || RETRYABLE_STATUS.has(code);
 };
+
+// 400/401/403/404 от Gemini — не «сбой, попробуй позже», а сломанные настройки:
+// снятую с продажи модель Google отдаёт 404 («no longer available to new users»),
+// невалидный ключ — 401/403. Если и резервные модели недоступны, повтор не поможет,
+// поэтому статус отдельный (503) и в сообщение попадает подсказка, что проверять.
+const CONFIG_ERROR_STATUS = new Set([400, 401, 403, 404]);
+const isConfigError = (error) => {
+  const code = errorStatus(error);
+  return code !== null && CONFIG_ERROR_STATUS.has(code);
+};
+
+// 429/503 «high demand» — все модели заняты. Пользователю честнее сказать «перегружено,
+// попробуйте через минуту», чем «сервис вернул ошибку»: повтор сканом не поможет.
+const isCapacityError = (error) => errorStatus(error) === 429 || errorStatus(error) === 503;
 
 // Скачивание страницы чека с повтором на транзиентных ошибках
 async function fetchReceiptPage(url) {
@@ -227,18 +262,21 @@ function normalizeReceipt(payload, categoriesList) {
 }
 
 // Единственный вызов LLM: разбор позиций + категоризация + дата и итог чека
-async function parseReceiptWithGemini(receiptText, categoriesList) {
+async function parseReceiptWithGemini(receiptText, categoriesList, modelId) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     const error = new Error("GEMINI_API_KEY не задан — распознавание чеков недоступно");
     error.status = 503;
+    // Свой код, а не status: SDK Gemini тоже отдаёт status=503 (перегрузка модели),
+    // и по статусу эти случаи не различить
+    error.code = "NO_GEMINI_API_KEY";
     throw error;
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel(
     {
-      model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
+      model: modelId || geminiModelForAttempt(1),
       // Инструкция собирается под конкретный список категорий пользователя
       systemInstruction: buildSystemInstruction(categoriesList),
       generationConfig: {
@@ -374,24 +412,36 @@ export default async function handler(req, res) {
     const categoriesList = categoriesFromClient.length > 0 ? categoriesFromClient : fallbackCategories;
 
     try {
-      // Повтор на транзиентной ошибке Gemini: первый (холодный) вызов иногда падает
+      // Повтор Gemini = вызов на СЛЕДУЮЩЕЙ модели цепочки. Так мы за один шаг лечим и
+      // перегрузку текущей модели (503 «high demand»), и её снятие с продажи (404) —
+      // повтор той же модели в обоих случаях бесполезен. Отсутствие ключа повторять
+      // не имеет смысла — отличаем по своему коду, а не по статусу 503.
       const receipt = await withRetry(
-        () => parseReceiptWithGemini(receiptText, categoriesList),
-        (error) => error?.status !== 503 && isTransient(error),
+        (attempt) => parseReceiptWithGemini(receiptText, categoriesList, geminiModelForAttempt(attempt)),
+        (error) => error?.code !== "NO_GEMINI_API_KEY" && (isTransient(error) || isConfigError(error)),
+        { attempts: GEMINI_MAX_ATTEMPTS },
       );
       if (receipt.items.length === 0) {
         return send(422, { error: "Не удалось распознать структуру чека" });
       }
       return send(200, receipt);
     } catch (error) {
-      const status = error?.status === 503 ? 503 : 502;
       console.error("Gemini receipt parsing failed:", error instanceof Error ? error.message : error);
-      return send(status, {
-        error:
-          status === 503
-            ? "Распознавание чеков недоступно: не задан ключ Gemini (GEMINI_API_KEY)"
-            : "Сервис распознавания чеков вернул ошибку, попробуйте позже",
-      });
+      // Нет ключа — настройка окружения, а не сбой сервиса
+      if (error?.code === "NO_GEMINI_API_KEY") {
+        return send(503, { error: "Распознавание чеков недоступно: не задан ключ Gemini (GEMINI_API_KEY)" });
+      }
+      // Снятая с продажи модель (404) / невалидный ключ (401/403) — резервные модели не помогут
+      if (isConfigError(error)) {
+        return send(503, {
+          error: "Распознавание чеков настроено неверно: проверь GEMINI_API_KEY и GEMINI_MODEL",
+        });
+      }
+      // Все модели заняты (429/503) — это не ошибка чека, а емкость Gemini: стоит сказать прямо
+      if (isCapacityError(error)) {
+        return send(503, { error: "Сервис распознавания перегружен, попробуйте через минуту" });
+      }
+      return send(502, { error: "Сервис распознавания чеков вернул ошибку, попробуйте позже" });
     }
   } catch (error) {
     console.error("parse-receipt unexpected error:", error);
