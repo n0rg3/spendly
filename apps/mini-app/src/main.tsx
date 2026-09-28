@@ -2246,15 +2246,6 @@ useEffect(() => {
                   className={`category-icon-button${isSelected ? " selected" : ""}`}
                   key={category.id}
                   aria-pressed={isSelected}
-                  style={{
-                    // Подложка плитки прозрачная: цветным остаётся только внешний
-                    // контур, толщину делаем заметной — 2px в цвете категории
-                    border: `2px solid ${categoryColor.border}`,
-                    // Кольцо-разрыв в цвете категории: видно и вне плашки
-                    boxShadow: isSelected
-                      ? `0 0 0 2.5px var(--bg-color), 0 0 0 5px ${categoryColor.chart}`
-                      : undefined,
-                  }}
                   onPointerDown={() => startCategoryPress(category)}
                   onPointerUp={endCategoryPress}
                   onPointerCancel={endCategoryPress}
@@ -2272,10 +2263,12 @@ useEffect(() => {
                   <span className="category-icon-wrapper">
                     <Icon name={category.icon || "other"} />
                   </span>
-                  {/* Точка легенды: тот же оттенок, что у сектора диаграммы и карточки
-                      в списке трат — единый цвет категории во всех трёх местах */}
-                  <span className="category-legend-dot" style={{ background: categoryColor.chart }} />
-                  <b>{category.name}</b>
+                  {/* Цвет категории на плитке несёт только эта точка: тот же оттенок,
+                      что у сектора диаграммы и у карточки в списке трат */}
+                  <span className="category-tile-label">
+                    <span className="category-legend-dot" style={{ background: categoryColor.chart }} />
+                    <b>{category.name}</b>
+                  </span>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
                     <small>{formatMoney(categoryStat?.amount ?? 0)}</small>
                     {category.budgets?.[selectedMonth] && (

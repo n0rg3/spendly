@@ -13,8 +13,6 @@ export type CategoryColor = {
   chart: string;
   /** Тот же оттенок с alpha 0.25 — затенённый сектор при выборе другой категории */
   dimmed: string;
-  /** Лёгкая рамка для чёткости контура плитки категории */
-  border: string;
 };
 
 /** Насыщенность и светлота ярких секторов: сочно, но читаемо на светлом фоне */
@@ -23,10 +21,6 @@ export const CHART_LIGHTNESS = 60;
 
 /** Прозрачность затенённых секторов при выборе категории */
 export const DIMMED_OPACITY = 0.25;
-
-const BORDER_SATURATION = 70;
-const BORDER_LIGHTNESS = 55;
-const BORDER_ALPHA = 0.45;
 
 const normalizeHue = (hue: number): number => ((hue % 360) + 360) % 360;
 
@@ -38,6 +32,9 @@ const normalizeHue = (hue: number): number => ((hue % 360) + 360) % 360;
  * а один и тот же индекс всегда даёт один и тот же цвет — категория не «перекрашивается»
  * при пересчёте статистики или смене месяца.
  *
+ * Отдельной рамки/плашки цвета здесь нет намеренно: плитки и карточки в списке
+ * трат нейтральные, а цвет категории показывают сектор диаграммы и маленькая точка.
+ *
  * @param index порядковый номер категории (0 ... total-1)
  * @param total количество категорий, по которому раскладывается круг
  */
@@ -46,6 +43,5 @@ export const getCategoryColor = (index: number, total: number): CategoryColor =>
   return {
     chart: `hsl(${hue}, ${CHART_SATURATION}%, ${CHART_LIGHTNESS}%)`,
     dimmed: `hsl(${hue}, ${CHART_SATURATION}%, ${CHART_LIGHTNESS}%, ${DIMMED_OPACITY})`,
-    border: `hsla(${hue}, ${BORDER_SATURATION}%, ${BORDER_LIGHTNESS}%, ${BORDER_ALPHA})`,
   };
 };
