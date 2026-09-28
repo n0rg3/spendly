@@ -29,6 +29,7 @@ const realFetch = globalThis.fetch;
 // Состояние мока: последний запрос к Gemini, ответ модели и подмена HTML чека.
 // receiptFails/geminiFails — сколько первых попыток должно упасть (для проверки ретраев).
 let geminiUrl = null;
+let geminiUrls = []; // все вызовы по порядку: нужно видеть, на какой модели был повтор
 let geminiRequest = null;
 let geminiReply = AI_RECEIPT;
 let geminiStatus = 200;
@@ -52,6 +53,7 @@ globalThis.fetch = async (url, options) => {
   }
   if (target.includes("generateContent")) {
     geminiUrl = target;
+    geminiUrls.push(target);
     geminiRequest = JSON.parse(options?.body ?? "{}");
     geminiCalls += 1;
     if (geminiFails > 0) {
@@ -95,6 +97,7 @@ function resetAi({ apiKey = "test-key" } = {}) {
   // Ретраи не должны тормозить тесты
   process.env.RECEIPT_RETRY_DELAY_MS = "0";
   geminiUrl = null;
+  geminiUrls = [];
   geminiRequest = null;
   geminiReply = AI_RECEIPT;
   geminiStatus = 200;
@@ -128,6 +131,11 @@ async function invoke({ method = "POST", body, origin = "https://n0rg3.github.io
 }
 
 const QR_URL = "https://suf.purs.gov.rs/v/?vl=TESTQRURL";
+
+// Модели, на которых реально уходили вызовы в Gemini, — по порядку вызовов
+function calledModels() {
+  return geminiUrls.map((url) => /models\/([a-z0-9.-]+):/.exec(url)[1]);
+}
 
 test("распознаёт чек одним вызовом Gemini: позиции, категории, итог и дата", async () => {
   resetAi();
@@ -398,6 +406,41 @@ test("перегрузка моделей (503 от всех) — 3 попытк
   assert.match(body.error, /перегружен/);
   assert.doesNotMatch(body.error, /GEMINI_API_KEY/, "это ёмкость Gemini, а не отсутствие ключа");
   assert.equal(geminiCalls, 3, "пробуем три разные модели, прежде чем сдаться");
+});
+
+test("429 (лимит 5 RPM) повторяет ту же модель с backoff, а не переключает модель", async () => {
+  resetAi();
+  geminiFails = 1; // первая попытка — 429
+  geminiFailStatus = 429;
+  const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Продукты", "Дом"] } });
+
+  assert.equal(status, 200, "после одного 429 повтор должен выстрелить");
+  assert.equal(geminiCalls, 2);
+  assert.deepEqual(calledModels(), ["gemini-3.8-flash", "gemini-3.8-flash"], "повтор обязан быть на той же модели");
+  assert.deepEqual(body.items.map((i) => i.category), ["Продукты", "Продукты", "Дом"]);
+});
+
+test("429 во всех попытках — 429 с понятным сообщением и без перебора моделей", async () => {
+  resetAi();
+  geminiStatus = 429; // лимит исчерпан: и основная, и резервные модели его увидят
+  const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Еда"] } });
+
+  assert.equal(status, 429);
+  assert.equal(body.code, "RATE_LIMITED");
+  assert.match(body.error, /Превышен лимит запросов/);
+  assert.match(body.error, /30–60/);
+  // 1 попытка + 2 повтора с backoff, и всё на ОДНОЙ модели: квота считается на ключ
+  assert.equal(geminiCalls, 3);
+  assert.equal(new Set(calledModels()).size, 1, "переключать модель при 429 бессмысленно — квота на ключ");
+});
+
+test("503 и 429 не смешиваются: 503 переключает модель, а не ждёт backoff", async () => {
+  resetAi();
+  geminiStatus = 503; // «high demand» — ротация моделей
+  const { status } = await invoke({ body: { qrUrl: QR_URL, categories: ["Еда"] } });
+
+  assert.equal(status, 503, "исчерпание моделей по 503 -> сообщение о перегрузе");
+  assert.deepEqual(calledModels(), ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"]);
 });
 
 test("снятая с продажи модель (404) — уходим на резервную модель и всё равно разбираем чек", async () => {

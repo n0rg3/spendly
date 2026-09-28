@@ -240,10 +240,13 @@ function currentMonthKey() {
 const RECEIPT_API_BASE = "https://serverless-tawny-xi-39.vercel.app";
 const RECEIPT_API_PATH = "/api/parse-receipt";
 
-// Дебаунс повторных срабатываний QR-сканера и таймаут ожидания ответа распознавания.
-// Клиент ждёт ЧУТЬ ДОЛЬШЕ лимита функции на Vercel (maxDuration: 60 с): так на экране
-// появится реальная ошибка сервера, а не ложное «не дождались» из-за собственного таймаута
-const PARSE_DEBOUNCE_MS = 300;
+// Таймаут ожидания ответа распознавания. Клиент ждёт ЧУТЬ ДОЛЬШЕ лимита функции на Vercel
+// (maxDuration: 60 с): так на экране появится реальная ошибка сервера, а не ложное
+// «не дождались» из-за собственного таймаута
+// Дебаунс сканирования: события QR, пришедшие за 600 мс, схлопываются в ОДИН запрос.
+// Telegram-сканер иногда присылает qrTextReceived дважды, а лимит Gemini Free Tier — 5 RPM:
+// каждый лишний вызов — это 429 и недовольный пользователь.
+const PARSE_DEBOUNCE_MS = 600;
 const PARSE_TIMEOUT_MS = 75_000;
 // Сколько ждём дашборд из Firestore, прежде чем отправить стартовые категории языка
 const PARSE_CATEGORIES_TIMEOUT_MS = 5000;
@@ -255,6 +258,10 @@ type ParsedReceiptPayload = {
   items: { name: string; qty: number; price: number; total: number; category: string | null }[];
   total: number;
 };
+
+// Сервер отдал code: RATE_LIMITED (исчерпан лимит Gemini). Текст ошибки на сервере русский,
+// поэтому на клиенте показываем собственное сообщение на языке интерфейса
+class ReceiptRateLimitError extends Error {}
 
 // Название категории в сравнимом виде и нечёткое сопоставление категорий
 // («Продукты» <-> «Еда») живут в ./categoryMatch
@@ -1253,10 +1260,23 @@ useEffect(() => {
     langRef.current = lang;
   }, [lang]);
 
-  // Управление запросом распознавания: отмена зависших, защита от гонки и спама
+  // Управление запросом распознавания: дебаунс, запрет дублей, отмена зависших
   const parseAbortRef = useRef<AbortController | null>(null);
   const parseRequestIdRef = useRef(0);
-  const lastParseAtRef = useRef(0);
+  // Запрос уже ушёл в Gemini: пока он не завершён, следующий НЕ запускаем (лимит 5 RPM)
+  const parseInFlightRef = useRef(false);
+  // Дебаунс: QR, пришедшие подряд, схлопываются в один вызов API
+  const debounceTimerRef = useRef<number | undefined>(undefined);
+  const pendingQrRef = useRef<string | undefined>(undefined);
+
+  // Размонтирование: гасим отложенный запуск и висящий запрос, чтобы они не «выстрелили»
+  // уже после закрытия Mini App (это тоже съедало бы квоту Gemini)
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current !== undefined) window.clearTimeout(debounceTimerRef.current);
+      parseAbortRef.current?.abort();
+    };
+  }, []);
 
   // Категории, которые уходят в Gemini. Список НИКОГДА не бывает пустым:
   // 1) сначала ждём реальные категории пользователя из Firestore (через ref — без
@@ -1331,10 +1351,12 @@ useEffect(() => {
       signal,
     });
 
-    const payload = (await response.json().catch(() => null)) as (Partial<ParsedReceiptPayload> & { error?: string }) | null;
+    const payload = (await response.json().catch(() => null)) as (Partial<ParsedReceiptPayload> & { error?: string; code?: string }) | null;
 
     if (!response.ok || !payload || !payload.items) {
       console.error("API Error Details:", { status: response.status, statusText: response.statusText, url: response.url, payload });
+      // 429 с кодом RATE_LIMITED — отдельный тип ошибки, чтобы показать локализованный текст
+      if (payload?.code === "RATE_LIMITED") throw new ReceiptRateLimitError(payload.error);
       throw new Error(payload?.error || `Ошибка API: HTTP ${response.status}`);
     }
 
@@ -1353,27 +1375,22 @@ useEffect(() => {
   const parseReceiptApi = (qrUrl: string, categories: string[], signal: AbortSignal) =>
     requestReceipt(qrUrl, categories, signal);
 
-  // Единая точка запуска распознавания: дебаунс + отмена предыдущего запроса + лоадер
+  // Единая точка запуска распознавания: запрет дублей + лоадер + защита от гонки
   const handleParse = async (qrUrl: string) => {
-    // 1) Дебаунс: сканер может прислать один и тот же QR несколько раз подряд
-    const now = Date.now();
-    if (now - lastParseAtRef.current < PARSE_DEBOUNCE_MS) {
-      console.log("[AI Parse] повторный скан проигнорирован (дебаунс)");
+    // 1) Пока предыдущий запрос не завершён — новый НЕ запускаем. Это главная защита от
+    // лимита 5 RPM: отменять и стрелять заново нельзя, Gemini уже получил первый запрос
+    // и повторный удар по квоте гарантированно даст 429.
+    if (parseInFlightRef.current) {
+      console.log("[AI Parse] предыдущий запрос ещё идёт — повтор проигнорирован (защита от лимита)");
       return;
     }
-    lastParseAtRef.current = now;
-
-    // 2) Отменяем незавершённый запрос: старый ответ не должен перезаписать свежий
-    if (parseAbortRef.current) {
-      console.log("[AI Parse] отменяю предыдущий запрос");
-      parseAbortRef.current.abort();
-    }
+    parseInFlightRef.current = true;
 
     const controller = new AbortController();
     parseAbortRef.current = controller;
     const requestId = ++parseRequestIdRef.current;
 
-    // 3) Лоадер на время запроса — повторные клики заблокированы (см. disabled у кнопок)
+    // 2) Лоадер на время запроса — повторные клики заблокированы (см. disabled у кнопок)
     setIsReceiptLoading(true);
     setReceiptError(undefined);
 
@@ -1391,13 +1408,13 @@ useEffect(() => {
 
       const receipt = await parseReceiptApi(qrUrl, categories, controller.signal);
 
-      // 4) Гонка: пока шёл запрос, мог стартовать более новый — устаревший ответ отбрасываем
+      // 3) Гонка: пока шёл запрос, мог прийти более новый QR — устаревший ответ отбрасываем
       if (requestId !== parseRequestIdRef.current) {
         console.log("[AI Parse] устаревший ответ отброшен");
         return;
       }
 
-      // 5) Атомарное обновление: позиции вместе со своими категориями приходят одним
+      // 4) Атомарное обновление: позиции вместе со своими категориями приходят одним
       // объектом, черновики правок сбрасываются в том же батче React — один перерендер
       logReceiptItems(receipt);
       setParsedReceipt(receipt);
@@ -1413,15 +1430,35 @@ useEffect(() => {
       }
       console.error("API Error Details:", error);
       console.error("API Error Message:", error instanceof Error ? error.message : String(error));
+      // Исчерпан лимит Gemini: текст сервера русский, поэтому показываем свой, на языке UI
+      if (error instanceof ReceiptRateLimitError) {
+        setReceiptError(t("receiptRateLimit"));
+        return;
+      }
       setReceiptError(error instanceof Error ? error.message : t("receiptLoadError"));
     } finally {
       window.clearTimeout(timeoutId);
       // Флаги снимает только владелец последнего запроса — иначе лоадер «залипнет»
       if (requestId === parseRequestIdRef.current) {
         parseAbortRef.current = null;
+        parseInFlightRef.current = false;
         setIsReceiptLoading(false);
       }
     }
+  };
+
+  // Дебаунс перед отправкой: сканер Telegram может прислать qrTextReceived дважды подряд
+  // (или пользователь наводит камеру на тот же QR). Дубли схлопываются в один вызов API —
+  // иначе каждый лишний вызов съедает квоту Gemini Free Tier (5 RPM) и приводит к 429.
+  const scheduleParse = (qrUrl: string) => {
+    pendingQrRef.current = qrUrl;
+    if (debounceTimerRef.current !== undefined) window.clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = window.setTimeout(() => {
+      debounceTimerRef.current = undefined;
+      const queuedQr = pendingQrRef.current;
+      pendingQrRef.current = undefined;
+      if (queuedQr) void handleParse(queuedQr);
+    }, PARSE_DEBOUNCE_MS);
   };
 
   const handleQrReceived = (data?: { data?: string }) => {
@@ -1432,7 +1469,7 @@ useEffect(() => {
     telegram?.offEvent("scanQrPopupClosed", handleReceiptScanClosed);
     telegram?.closeScanQrPopup?.();
     // Данные передаются напрямую из события (сырой QR), а не читаются из state
-    void handleParse(receiptUrl);
+    scheduleParse(receiptUrl);
   };
 
   // Попап нативного сканера закрыт без результата — снимаем подписки,
@@ -1543,10 +1580,17 @@ useEffect(() => {
 
   const startQrScan = () => {
     closeAddMenu();
-    // Пока идёт распознавание, повторный запуск блокируем (лоадер уже на экране)
-    if (isReceiptLoading) {
+    // Пока идёт распознавание, повторный запуск блокируем: запрос уже ушёл в Gemini,
+    // а лимит Free Tier — 5 запросов в минуту (лоадер кнопки + эта проверка)
+    if (isReceiptLoading || parseInFlightRef.current) {
       console.log("[AI Parse] распознавание уже идёт — повторный запуск заблокирован");
       return;
+    }
+    // Незапущенный отложенный запрос (дебаунс) сбрасываем: пользователь начал заново
+    if (debounceTimerRef.current !== undefined) {
+      window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = undefined;
+      pendingQrRef.current = undefined;
     }
     if (!telegram?.showScanQrPopup) {
       // Сканер QR есть только в мобильных клиентах Telegram: в Desktop кнопка молча

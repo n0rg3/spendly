@@ -39,11 +39,12 @@ const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 const MAX_RECEIPT_TEXT_LENGTH = 20_000;
 
 // Таймауты подобраны под maxDuration функции на Vercel (60 с). Бюджет в худшем случае:
-// страница чека 10 с × 2 попытки ≈ 21 с + Gemini 11 с × 3 модели ≈ 34 с = ~55 с.
+// страница чека 10 с × 2 попытки ≈ 21 с + Gemini 10 с × 3 модели ≈ 30 с + паузы при 429
+// (2 с + 4 с) ≈ 6 с = ~57 с.
 // Три попытки Gemini — это три РАЗНЫЕ модели (см. FALLBACK_GEMINI_MODELS): повтор той же
 // перегруженной модели бесполезен, а снятую с продажи модель повтор тоже не спасёт.
 const RECEIPT_FETCH_TIMEOUT_MS = 10_000;
-const GEMINI_TIMEOUT_MS = 11_000;
+const GEMINI_TIMEOUT_MS = 10_000;
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 2; // скачивание страницы чека
 const GEMINI_MAX_ATTEMPTS = 3; // основная модель + две резервные
@@ -51,6 +52,20 @@ const GEMINI_MAX_ATTEMPTS = 3; // основная модель + две рез�
 const retryDelayMs = () => {
   const value = Number(process.env.RECEIPT_RETRY_DELAY_MS);
   return Number.isFinite(value) && value >= 0 ? value : 500;
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// ===== Лимит запросов Gemini (Free Tier, 5 RPM) =====
+// 429 — самый частый сбой, когда чек сканируют несколько раз подряд. Повторять его нужно
+// на ТОЙ ЖЕ модели с растущей паузой (2 с, затем 4 с): квота считается на ключ, поэтому
+// переключение на другую модель не помогает — оно только быстрее сожжёт остаток лимита.
+const RATE_LIMIT_RETRIES = 2;
+const RATE_LIMIT_BASE_DELAY_MS = 2_000;
+// Пауза перед повтором после 429 (в тестах выключается через RECEIPT_RETRY_DELAY_MS=0)
+const rateLimitDelayMs = (baseMs) => {
+  const value = Number(process.env.RECEIPT_RETRY_DELAY_MS);
+  return Number.isFinite(value) && value >= 0 ? value : baseMs;
 };
 
 // Резервные модели. Нужны по двум причинам: Google выводит модели из продажи
@@ -122,6 +137,22 @@ const isConfigError = (error) => {
   const code = errorStatus(error);
   return code !== null && CONFIG_ERROR_STATUS.has(code);
 };
+
+// 400/401/403 — неисправимо сразу (схема/ключ): ни повтор, ни смена модели не помогут.
+// 404 сюда НЕ входит: это снятая с продажи модель, и резервная модель как раз спасёт.
+const HARD_CONFIG_STATUS = new Set([400, 401, 403]);
+const isHardConfigError = (error) => {
+  const code = errorStatus(error);
+  return code !== null && HARD_CONFIG_STATUS.has(code);
+};
+
+// Имеет смысл уйти на резервную модель: 404 (модель вывели из продажи) и транзиентные
+// сбои — 503 «high demand», 5xx, таймаут. 429 сюда НЕ входит: квота на ключ, а не на модель
+const worthAnotherModel = (error) => errorStatus(error) === 404 || isTransient(error);
+
+// 429 — исчерпан лимит запросов к Gemini. Это НЕ «попробуй другую модель»: квота
+// считается на ключ, поэтому повтор делаем на той же модели, но позже (см. backoff ниже).
+const isRateLimited = (error) => errorStatus(error) === 429;
 
 // 429/503 «high demand» — все модели заняты. Пользователю честнее сказать «перегружено,
 // попробуйте через минуту», чем «сервис вернул ошибку»: повтор сканом не поможет.
@@ -336,6 +367,45 @@ async function parseReceiptWithGemini(receiptText, categoriesList, modelId) {
   return normalizeReceipt(payload, categoriesList);
 }
 
+// Вызов Gemini с двумя РАЗНЫМИ правилами повтора — это и есть защита от лимита 5 RPM:
+//  - 429 (лимит запросов): повторяем ту же модель с растущей паузой 2 с -> 4 с. Переключать
+//    модель бессмысленно: квота считается на ключ, а не на модель;
+//  - 503 «high demand» / таймаут / 5xx: ждать нечего, поэтому идём на СЛЕДУЮЩУЮ модель
+//    цепочки (FALLBACK_GEMINI_MODELS);
+//  - 400/401/403/404: не чинится ничем — сразу наружу.
+async function parseReceiptWithGeminiLimits(receiptText, categoriesList) {
+  let lastError;
+  for (let attempt = 1; attempt <= GEMINI_MAX_ATTEMPTS; attempt += 1) {
+    const model = geminiModelForAttempt(attempt);
+    for (let rateLimitTry = 0; ; rateLimitTry += 1) {
+      try {
+        return await parseReceiptWithGemini(receiptText, categoriesList, model);
+      } catch (error) {
+        lastError = error;
+        if (error?.code === "NO_GEMINI_API_KEY" || isHardConfigError(error)) throw error;
+
+        if (isRateLimited(error)) {
+          if (rateLimitTry >= RATE_LIMIT_RETRIES) throw error;
+          const waitMs = RATE_LIMIT_BASE_DELAY_MS * 2 ** rateLimitTry;
+          console.warn(
+            `receipt: Gemini 429 (${model}) — повтор через ${waitMs} мс, попытка ${rateLimitTry + 2} из ${RATE_LIMIT_RETRIES + 1}`,
+          );
+          await sleep(rateLimitDelayMs(waitMs));
+          continue;
+        }
+
+        if (attempt < GEMINI_MAX_ATTEMPTS && worthAnotherModel(error)) {
+          console.warn(`receipt: ${model} недоступна (${error?.message ?? error}) — резервная модель`);
+          await sleep(retryDelayMs());
+          break;
+        }
+        throw error;
+      }
+    }
+  }
+  throw lastError;
+}
+
 // --- CORS: GitHub Pages + localhost + доп. источники из env ---
 function corsHeaders(origin) {
   const allowed = [
@@ -441,15 +511,8 @@ export default async function handler(req, res) {
     const categoriesList = categoriesFromClient.length > 0 ? categoriesFromClient : fallbackCategories;
 
     try {
-      // Повтор Gemini = вызов на СЛЕДУЮЩЕЙ модели цепочки. Так мы за один шаг лечим и
-      // перегрузку текущей модели (503 «high demand»), и её снятие с продажи (404) —
-      // повтор той же модели в обоих случаях бесполезен. Отсутствие ключа повторять
-      // не имеет смысла — отличаем по своему коду, а не по статусу 503.
-      const receipt = await withRetry(
-        (attempt) => parseReceiptWithGemini(receiptText, categoriesList, geminiModelForAttempt(attempt)),
-        (error) => error?.code !== "NO_GEMINI_API_KEY" && (isTransient(error) || isConfigError(error)),
-        { attempts: GEMINI_MAX_ATTEMPTS },
-      );
+      // Повторы внутри: 429 -> та же модель с backoff, 503/таймаут -> резервная модель
+      const receipt = await parseReceiptWithGeminiLimits(receiptText, categoriesList);
       if (receipt.items.length === 0) {
         return send(422, { error: "Не удалось распознать структуру чека" });
       }
@@ -460,13 +523,21 @@ export default async function handler(req, res) {
       if (error?.code === "NO_GEMINI_API_KEY") {
         return send(503, { error: "Распознавание чеков недоступно: не задан ключ Gemini (GEMINI_API_KEY)" });
       }
+      // Исчерпан лимит запросов (5 RPM): повторы уже не помогли, нужен отказ от сканирования
+      // на 30–60 с. code даёт клиенту возможность показать сообщение на языке интерфейса
+      if (isRateLimited(error)) {
+        return send(429, {
+          error: "Превышен лимит запросов. Пожалуйста, подождите 30–60 секунд перед следующей попыткой.",
+          code: "RATE_LIMITED",
+        });
+      }
       // Снятая с продажи модель (404) / невалидный ключ (401/403) — резервные модели не помогут
       if (isConfigError(error)) {
         return send(503, {
           error: "Распознавание чеков настроено неверно: проверь GEMINI_API_KEY и GEMINI_MODEL",
         });
       }
-      // Все модели заняты (429/503) — это не ошибка чека, а емкость Gemini: стоит сказать прямо
+      // Модели заняты (503 «high demand») — это не ошибка чека, а емкость Gemini
       if (isCapacityError(error)) {
         return send(503, { error: "Сервис распознавания перегружен, попробуйте через минуту" });
       }
