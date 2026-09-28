@@ -304,6 +304,45 @@ test("пустой текст чека — 422, модель не вызывае
   assert.equal(geminiRequest, null);
 });
 
+test("время чека остаётся местным: суффикс Z и смещение отбрасываются, а не читаются как UTC", async () => {
+  resetAi();
+  // Модель часто дописывает Z/смещение — 17:50 на чеке должно остаться 17:50
+  geminiReply = { ...AI_RECEIPT, dateTime: "2026-09-16T17:50:44Z" };
+  const withZ = await invoke({ body: { qrUrl: QR_URL, categories: ["Еда"] } });
+  assert.equal(withZ.status, 200);
+  assert.equal(withZ.body.dateTime, "2026-09-16T17:50:44", "Z не должен попасть в ответ");
+
+  resetAi();
+  geminiReply = { ...AI_RECEIPT, dateTime: "2026-09-16T17:50:44+02:00" };
+  const withOffset = await invoke({ body: { qrUrl: QR_URL, categories: ["Еда"] } });
+  assert.equal(withOffset.body.dateTime, "2026-09-16T17:50:44", "смещение не должно попасть в ответ");
+
+  resetAi();
+  geminiReply = { ...AI_RECEIPT, dateTime: "2026-09-16 17:50" };
+  const spaceSeparated = await invoke({ body: { qrUrl: QR_URL, categories: ["Еда"] } });
+  assert.equal(spaceSeparated.body.dateTime, "2026-09-16T17:50:00", "без секунд -> :00");
+});
+
+test("неразобранная дата чека -> null, а не сдвинутая дата", async () => {
+  for (const bogus of ["", "не дата", "2026-13-40T99:99:99Z", "2026-02-31T10:00:00"]) {
+    resetAi();
+    geminiReply = { ...AI_RECEIPT, dateTime: bogus };
+    const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Еда"] } });
+    assert.equal(status, 200, `dateTime=${bogus}`);
+    assert.equal(body.dateTime, null, `dateTime=${bogus} должен превратиться в null`);
+  }
+});
+
+test("схема и инструкция запрещают Z: формат date-time убран, правило про локальное время есть", async () => {
+  resetAi();
+  await invoke({ body: { qrUrl: QR_URL, categories: ["Еда"] } });
+
+  const dateTimeSchema = geminiRequest.generationConfig.responseSchema.properties.dateTime;
+  assert.equal(dateTimeSchema.format, undefined, "format: date-time тянет модель дописывать Z");
+  assert.match(dateTimeSchema.description, /без Z/);
+  assert.match(geminiRequest.systemInstruction.parts[0].text, /НЕ добавляй суффикс Z/);
+});
+
 test("extractReceiptText отдаёт текст чека без скриптов, стилей и тегов", () => {
   const text = extractReceiptText(receiptHtml);
 

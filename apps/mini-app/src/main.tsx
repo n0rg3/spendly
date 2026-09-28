@@ -20,6 +20,8 @@ import { buildDonutLayout, type CategoryStat } from "./chartGradient";
 import { nextSelectedCategoryIdOnOutsideTap } from "./chartInteraction";
 import { cardDropIndex, cardDropLineY, type CardDragRect } from "./cardDrag";
 import { matchCategory } from "./categoryMatch";
+// Даты чека: время с принта («стена часов»), без сдвига на часовой пояс -> ./receiptDate
+import { receiptDateToIso, formatReceiptDateTime, localMonthKey } from "./receiptDate";
 import "./styles.css";
 
 function lockAppHeight() {
@@ -231,10 +233,6 @@ function currentMonthKey() {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// ===== Даты чека =====
-// Разбор чека целиком делает Gemini на сервере и отдаёт dateTime уже в ISO 8601,
-// поэтому на клиенте не осталось ни регэкспов формата сербского чека, ни кэша категорий.
-
 // ===== Эндпоинт распознавания чеков (зафиксирован) =====
 // Продакшен-деплой serverless-функции. Алиас /api/receipts/parse из vercel.json ведёт сюда же,
 // но клиент ходит напрямую по каноническому пути — так адрес не зависит от rewrites.
@@ -257,21 +255,6 @@ type ParsedReceiptPayload = {
   items: { name: string; qty: number; price: number; total: number; category: string | null }[];
   total: number;
 };
-
-// Безопасно приводит dateTime от сервера к ISO; невалидное значение -> null
-function receiptDateToIso(value: string | null): string | null {
-  if (!value) return null;
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? null : new Date(timestamp).toISOString();
-}
-
-// Подпись даты/времени чека в модалке: «2026-09-16 17:50»
-function formatReceiptDateTime(value: string | null): string | null {
-  const iso = receiptDateToIso(value);
-  if (!iso) return null;
-  const { date, time } = toLocalDateTime(iso);
-  return `${date} ${time}`;
-}
 
 // Название категории в сравнимом виде и нечёткое сопоставление категорий
 // («Продукты» <-> «Еда») живут в ./categoryMatch
@@ -692,7 +675,10 @@ useEffect(() => {
     if (!dashboard?.expenses) return [];
     return dashboard.expenses.filter((e) => {
       if (!e.createdAt) return false;
-      return e.createdAt.startsWith(selectedMonth);
+      // Сравниваем по МЕСТНОМУ месяцу, а не по префиксу ISO-строки: createdAt хранится в UTC,
+      // и чек, купленный в 00:30 при UTC+2, лежит в строке как «вчера 22:30Z» — раньше он
+      // выпадал из своего месяца и попадал в предыдущий
+      return localMonthKey(e.createdAt) === selectedMonth;
     });
   }, [dashboard, selectedMonth]);
 

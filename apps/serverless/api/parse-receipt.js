@@ -146,6 +146,33 @@ async function fetchReceiptPage(url) {
   );
 }
 
+// Дата/время чека — это «стена часов» с принта: 17:50 на чеке должно остаться 17:50.
+// Модель часто дописывает «Z» или «+02:00», и тогда получатель считает 17:50 временем UTC
+// и прибавляет свой локальный пояс (UTC+2) — выходит 19:50. Поэтому любой часовой пояс
+// отбрасывается, а проверяются сами цифры даты (в т.ч. что такая дата есть в календаре).
+// Возвращает YYYY-MM-DDTHH:mm:ss без часового пояса либо null, если значение не разобрать.
+export function normalizeReceiptDateTime(value) {
+  if (typeof value !== "string") return null;
+  const match = /(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(value.trim());
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hours = Number(match[4] ?? 0);
+  const minutes = Number(match[5] ?? 0);
+  const seconds = Number(match[6] ?? 0);
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hours > 23 || minutes > 59 || seconds > 59) {
+    return null;
+  }
+  // Отсекаем несуществующие даты календаря (31.02 и т.п.)
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return null;
+
+  const pad = (part, size = 2) => String(part).padStart(size, "0");
+  return `${pad(year, 4)}-${pad(month)}-${pad(day)}T${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
 // Системная инструкция: правила разбора чека и категоризации.
 // Список категорий подставляется ДИНАМИЧЕСКИ (из запроса клиента): правило «строго из списка»
 // должно стоять в системной инструкции, а не только в промпте — иначе модель придумывает
@@ -160,7 +187,7 @@ function buildSystemInstruction(categoriesList) {
     '3. price — цена за единицу, qty — количество, total — сумма по позиции. Сербский формат чисел ("134,99", "1.234,56") переводи в обычные числа.',
     "4. Очищай название товара (name) от технологических пометок чека: убирай фискальные суффиксы «KOM (Ђ)», «KOM (E)», «KOM», служебные коды и прочий мусор. Размер упаковки оставляй в компактном латинском виде.",
     '   Пример: "SOK COCA COLA ZERO 1,5L KOM (Ђ)" -> "Sok Coca Cola Zero 1.5L".',
-    "5. dateTime — дата и время покупки из чека в формате ISO 8601 (YYYY-MM-DDTHH:mm:ss).",
+    "5. dateTime — дата и время покупки ТОЧНО так, как они напечатаны на чеке: формат YYYY-MM-DDTHH:mm:ss, локальное время чека. НЕ добавляй суффикс Z и НЕ указывай часовой пояс/смещение: 17:50 на чеке должно остаться 17:50, иначе приложение посчитает это UTC и прибавит локальный пояс.",
     '6. total — итоговая сумма чека (строка "Укупан износ"), а если её нет — сумма total всех позиций.',
     "Не добавляй пояснений, markdown и лишних полей — только JSON по схеме.",
   ].join("\n");
@@ -174,9 +201,11 @@ function buildResponseSchema(categoriesList) {
     properties: {
       dateTime: {
         type: "string",
-        format: "date-time",
         nullable: true,
-        description: "Дата и время покупки в формате ISO 8601",
+        // Формат date-time здесь НЕ указываем: он требует RFC 3339 и модель дописывает
+        // «Z», а это превращает локальное время чека в UTC и сдвигает его на +2 часа
+        description:
+          "Дата и время покупки ровно как на чеке (локальное время), YYYY-MM-DDTHH:mm:ss, без Z и без смещения",
       },
       total: { type: "number", description: "Итоговая сумма чека" },
       items: {
@@ -255,7 +284,7 @@ function normalizeReceipt(payload, categoriesList) {
 
   const total = Number(payload.total);
   return {
-    dateTime: typeof payload.dateTime === "string" && payload.dateTime ? payload.dateTime : null,
+    dateTime: normalizeReceiptDateTime(payload.dateTime),
     items,
     total: Number.isFinite(total) ? total : items.reduce((sum, item) => sum + item.total, 0),
   };
