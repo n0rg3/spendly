@@ -235,9 +235,11 @@ function currentMonthKey() {
 // Разбор чека целиком делает Gemini на сервере и отдаёт dateTime уже в ISO 8601,
 // поэтому на клиенте не осталось ни регэкспов формата сербского чека, ни кэша категорий.
 
-// Дебаунс повторных срабатываний QR-сканера и таймаут ожидания ответа распознавания
+// Дебаунс повторных срабатываний QR-сканера и таймаут ожидания ответа распознавания.
+// Клиент ждёт ЧУТЬ ДОЛЬШЕ лимита функции на Vercel (maxDuration: 60 с): так на экране
+// появится реальная ошибка сервера, а не ложное «не дождались» из-за собственного таймаута
 const PARSE_DEBOUNCE_MS = 300;
-const PARSE_TIMEOUT_MS = 45_000;
+const PARSE_TIMEOUT_MS = 75_000;
 // Сколько ждём дашборд из Firestore, прежде чем отправить стартовые категории языка
 const PARSE_CATEGORIES_TIMEOUT_MS = 5000;
 
@@ -1538,7 +1540,10 @@ useEffect(() => {
       return;
     }
     if (!telegram?.showScanQrPopup) {
-      console.warn("QR-сканер недоступен: откройте Mini App в Telegram");
+      // Сканер QR есть только в мобильных клиентах Telegram: в Desktop кнопка молча
+      // «не работала» — теперь показываем понятное сообщение
+      console.warn("[AI Parse] QR-сканер недоступен в этом клиенте Telegram");
+      setReceiptError(t("scannerUnavailable"));
       return;
     }
     telegram.onEvent("qrTextReceived", handleQrReceived);

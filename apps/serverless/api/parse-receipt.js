@@ -38,7 +38,10 @@ const MAX_RECEIPT_TEXT_LENGTH = 20_000;
 // Таймаут запроса страницы чека и один быстрый повтор на транзиентный сбой.
 // Первый (холодный) запрос к сайту чека/Gemini иногда падает — именно поэтому раньше
 // распознавание «срабатывало только со 2-3 раза». Повтор лечит это без участия пользователя.
-const RECEIPT_FETCH_TIMEOUT_MS = 20_000;
+// Бюджет времени подобран под maxDuration функции на Vercel (60 с):
+// 12 с × 2 попытки на страницу чека + 15 с × 2 попытки на Gemini ≈ 55 с в худшем случае
+const RECEIPT_FETCH_TIMEOUT_MS = 12_000;
+const GEMINI_TIMEOUT_MS = 15_000;
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 2;
 // Пауза между попытками; в тестах выключается через RECEIPT_RETRY_DELAY_MS=0
@@ -244,8 +247,13 @@ async function parseReceiptWithGemini(receiptText, categoriesList) {
         responseSchema: buildResponseSchema(categoriesList),
       },
     },
-    // GEMINI_BASE_URL — опциональный override (тесты/прокси); в production не нужен
-    process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : undefined,
+    {
+      // Таймаут одного запроса к Gemini: без него зависший вызов съедал лимит функции,
+      // клиент не дожидался ответа и скан выглядел «сломанным»
+      timeout: GEMINI_TIMEOUT_MS,
+      // GEMINI_BASE_URL — опциональный override (тесты/прокси); в production не нужен
+      ...(process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : {}),
+    },
   );
 
   // Категории повторяем и в промпте: системная инструкция + промпт = меньше шансов,
