@@ -256,6 +256,33 @@ test("без GEMINI_API_KEY распознавание недоступно (503
   assert.match(body.error, /GEMINI_API_KEY/);
 });
 
+test("системная инструкция жёстко фиксирует список категорий и правило очистки названий", async () => {
+  resetAi();
+  await invoke({ body: { qrUrl: QR_URL, categories: ["Еда", "Транспорт"] } });
+
+  const instruction = (geminiRequest.systemInstruction?.parts ?? []).map((part) => part.text).join("\n");
+
+  // Переданный список категорий зафиксирован в системной инструкции
+  assert.match(instruction, /"Еда"/);
+  assert.match(instruction, /"Транспорт"/);
+  assert.match(instruction, /строго из списка/);
+  assert.match(instruction, /Не придумывай новые категории/);
+
+  // Правило очистки названий от фискальных пометок сербских чеков
+  assert.match(instruction, /KOM \(Ђ\)/);
+  assert.match(instruction, /SOK COCA COLA ZERO 1,5L KOM \(Ђ\)/);
+  assert.match(instruction, /Sok Coca Cola Zero 1\.5L/);
+
+  // Описание поля name в схеме тоже требует чистого названия
+  assert.match(
+    geminiRequest.generationConfig.responseSchema.properties.items.items.properties.name.description,
+    /KOM/,
+  );
+
+  // И список категорий продублирован в промпте
+  assert.match(geminiRequest.contents[0].parts[0].text, /"Еда"/);
+});
+
 test("ошибка Gemini отдаётся как 502, без выдуманных позиций", async () => {
   resetAi();
   geminiStatus = 500;

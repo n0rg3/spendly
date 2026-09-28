@@ -19,6 +19,7 @@ import {
 import { buildDonutLayout, type CategoryStat } from "./chartGradient";
 import { nextSelectedCategoryIdOnOutsideTap } from "./chartInteraction";
 import { cardDropIndex, cardDropLineY, type CardDragRect } from "./cardDrag";
+import { matchCategory } from "./categoryMatch";
 import "./styles.css";
 
 function lockAppHeight() {
@@ -263,17 +264,8 @@ function formatReceiptDateTime(value: string | null): string | null {
   return `${date} ${time}`;
 }
 
-// Название категории в сравнимом виде: регистр, пробелы (в т.ч. неразрывные) и Unicode-форма
-// не должны мешать сопоставлению «категория от модели -> категория пользователя».
-// Та же нормализация работает на сервере (normalizeCategoryName в parse-receipt.js).
-function normalizeCategoryName(value: string | null | undefined): string {
-  return String(value ?? "")
-    .normalize("NFKC")
-    .replace(/[\u00a0\u2007\u2009\u202f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
+// Название категории в сравнимом виде и нечёткое сопоставление категорий
+// («Продукты» <-> «Еда») живут в ./categoryMatch
 
 function formatMonth(value: string, lang: Lang = "ru") {
   if (!value || typeof value !== "string" || !value.includes("-")) {
@@ -1396,6 +1388,7 @@ useEffect(() => {
 
       // 5) Атомарное обновление: позиции вместе со своими категориями приходят одним
       // объектом, черновики правок сбрасываются в том же батче React — один перерендер
+      logReceiptItems(receipt);
       setParsedReceipt(receipt);
       setReceiptDrafts({});
     } catch (error) {
@@ -1462,15 +1455,39 @@ useEffect(() => {
     if (draftAmount !== undefined && Number.isFinite(draftAmount) && draftAmount > 0) return draftAmount;
     return parsedReceipt?.items[index]?.total ?? 0;
   };
-  // Категория из ответа модели -> id категории пользователя. Сравниваем нормализованно
-  // (регистр, пробелы, Unicode-форма): даже если модель вернёт «Продукты » вместо «Продукты»,
-  // позиция всё равно получит нужную категорию
+  // Категория из ответа модели -> id категории пользователя.
+  // Матчинг нечёткий (название -> ID -> вхождение -> синонимы), поэтому «Продукты» от модели
+  // привяжется к «Еде» пользователя, а не свалится в «Остальное».
+  // Не нашли совпадения — "", позиция уходит в «Остальное» (не теряется)
   const receiptItemCategoryId = (index: number) => {
     const draftId = receiptDrafts[index]?.categoryId;
     if (draftId !== undefined) return draftId;
-    const aiName = normalizeCategoryName(parsedReceipt?.items[index]?.category);
-    if (!aiName) return "";
-    return dashboard?.categories.find((c) => normalizeCategoryName(c.name) === aiName)?.id ?? "";
+    const matched = matchCategory(dashboard?.categories ?? [], parsedReceipt?.items[index]?.category);
+    return matched?.category.id ?? "";
+  };
+
+  // Лог привязки категорий: видно, какое название прислал сервер, во что оно превратилось
+  // в UI (name/id/contains/synonym) и какие категории вообще были доступны
+  const logReceiptItems = (receipt: ParsedReceiptPayload) => {
+    const available = dashboardRef.current?.categories ?? [];
+    console.log("[Receipt Items Parsed]:", receipt.items);
+    console.log(
+      "[Receipt Items Parsed] доступные категории:",
+      available.map((category) => `${category.name} (id: ${category.id})`),
+    );
+    console.log(
+      "[Receipt Items Parsed] привязка категорий:",
+      receipt.items.map((item) => {
+        const matched = matchCategory(available, item.category);
+        return {
+          name: item.name,
+          aiCategory: item.category,
+          matchedId: matched?.category.id ?? "",
+          matchedName: matched?.category.name ?? null,
+          matchedBy: matched?.matchedBy ?? "none (уйдёт в «Остальное»)",
+        };
+      }),
+    );
   };
 
   // «Сохранить все траты»: создаёт отдельную трату на каждую позицию чека

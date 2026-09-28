@@ -108,18 +108,25 @@ async function fetchReceiptPage(url) {
   );
 }
 
-// Системная инструкция: правила разбора чека и категоризации
-const SYSTEM_INSTRUCTION = [
-  "Ты разбираешь сербские фискальные чеки (suf.purs.gov.rs) и категоризуешь покупки.",
-  "На вход приходит сырой текст чека — верни строго JSON по заданной схеме.",
-  "Правила:",
-  "1. items — все купленные позиции в исходном порядке. Служебные строки (итог, налог, сдача, заголовки, данные продавца и кассира) позициями не считаются.",
-  '2. price — цена за единицу, qty — количество, total — сумма по позиции. Сербский формат чисел ("134,99", "1.234,56") переводи в обычные числа.',
-  "3. category — ровно одно название из списка допустимых категорий; если ничего не подходит — null.",
-  "4. dateTime — дата и время покупки из чека в формате ISO 8601 (YYYY-MM-DDTHH:mm:ss).",
-  '5. total — итоговая сумма чека (строка "Укупан износ"), а если её нет — сумма total всех позиций.',
-  "Не добавляй пояснений, markdown и лишних полей — только JSON по схеме.",
-].join("\n");
+// Системная инструкция: правила разбора чека и категоризации.
+// Список категорий подставляется ДИНАМИЧЕСКИ (из запроса клиента): правило «строго из списка»
+// должно стоять в системной инструкции, а не только в промпте — иначе модель придумывает
+// свои категории («Продукты» вместо «Еда»), и позиции сваливаются в «Остальное».
+function buildSystemInstruction(categoriesList) {
+  return [
+    "Ты разбираешь сербские фискальные чеки (suf.purs.gov.rs) и категоризуешь покупки.",
+    "На вход приходит сырой текст чека — верни строго JSON по заданной схеме.",
+    "Правила:",
+    "1. items — все купленные позиции в исходном порядке. Служебные строки (итог, налог, сдача, заголовки, данные продавца и кассира) позициями не считаются.",
+    `2. Каждая позиция ДОЛЖНА быть отнесена к одной из следующих категорий строго из списка: ${JSON.stringify(categoriesList)}. Не придумывай новые категории. Если ни одна категория из списка не подходит — null.`,
+    '3. price — цена за единицу, qty — количество, total — сумма по позиции. Сербский формат чисел ("134,99", "1.234,56") переводи в обычные числа.',
+    "4. Очищай название товара (name) от технологических пометок чека: убирай фискальные суффиксы «KOM (Ђ)», «KOM (E)», «KOM», служебные коды и прочий мусор. Размер упаковки оставляй в компактном латинском виде.",
+    '   Пример: "SOK COCA COLA ZERO 1,5L KOM (Ђ)" -> "Sok Coca Cola Zero 1.5L".',
+    "5. dateTime — дата и время покупки из чека в формате ISO 8601 (YYYY-MM-DDTHH:mm:ss).",
+    '6. total — итоговая сумма чека (строка "Укупан износ"), а если её нет — сумма total всех позиций.',
+    "Не добавляй пояснений, markdown и лишних полей — только JSON по схеме.",
+  ].join("\n");
+}
 
 
 // Схема ответа модели: задаёт фиксированный JSON, который всегда вернёт Gemini
@@ -140,7 +147,11 @@ function buildResponseSchema(categoriesList) {
         items: {
           type: "object",
           properties: {
-            name: { type: "string", description: "Название товара как в чеке" },
+            name: {
+              type: "string",
+              description:
+                "Название товара без технологических пометок чека: без фискальных суффиксов «KOM (Ђ)», «KOM (E)», «KOM» и служебных кодов",
+            },
             qty: { type: "number", description: "Количество" },
             price: { type: "number", description: "Цена за единицу" },
             total: { type: "number", description: "Сумма по позиции" },
@@ -148,7 +159,8 @@ function buildResponseSchema(categoriesList) {
               type: "string",
               nullable: true,
               enum: categoriesList,
-              description: "Категория из списка допустимых или null",
+              description:
+                "Категория строго из списка допустимых категорий (enum) или null, если ничего не подходит",
             },
           },
           required: ["name", "qty", "price", "total", "category"],
@@ -224,7 +236,8 @@ async function parseReceiptWithGemini(receiptText, categoriesList) {
   const model = genAI.getGenerativeModel(
     {
       model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
-      systemInstruction: SYSTEM_INSTRUCTION,
+      // Инструкция собирается под конкретный список категорий пользователя
+      systemInstruction: buildSystemInstruction(categoriesList),
       generationConfig: {
         temperature: 0,
         responseMimeType: "application/json",
@@ -235,8 +248,10 @@ async function parseReceiptWithGemini(receiptText, categoriesList) {
     process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : undefined,
   );
 
+  // Категории повторяем и в промпте: системная инструкция + промпт = меньше шансов,
+  // что модель придумает своё название и позиция уедет в «Остальное»
   const prompt = [
-    `Допустимые категории: ${JSON.stringify(categoriesList)}`,
+    `Допустимые категории (строго из этого списка, новые не придумывать): ${JSON.stringify(categoriesList)}`,
     "Сырой текст чека:",
     receiptText,
   ].join("\n");
