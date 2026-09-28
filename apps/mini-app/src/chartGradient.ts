@@ -40,6 +40,12 @@ export type DonutLayout = {
   ring: string;
   /** Выбранный сектор (выступает наружу); undefined — выбора нет */
   active?: DonutSegment;
+  /**
+   * Границы всех секторов — для hit-теста тапа (см. sectorAtPoint).
+   * Ровно те же значения, что ушли в градиент, поэтому зона тапа совпадает
+   * с нарисованным сектором.
+   */
+  segments: { id: string; from: number; to: number }[];
 };
 
 // Нейтральное кольцо, когда трат за месяц нет
@@ -60,7 +66,7 @@ export function buildDonutLayout(
   selectedId?: string,
 ): DonutLayout {
   const total = stats.reduce((sum, item) => sum + item.amount, 0);
-  if (!total) return { ring: EMPTY_RING };
+  if (!total) return { ring: EMPTY_RING, segments: [] };
 
   const selectedIndex =
     selectedId === undefined
@@ -68,6 +74,9 @@ export function buildDonutLayout(
       : stats.findIndex((item) => item.id === selectedId);
 
   let active: DonutSegment | undefined;
+  // Границы секторов для hit-теста: ровно те же числа, что уходят в градиент,
+  // поэтому зона тапа совпадает с нарисованным сектором
+  const segments: { id: string; from: number; to: number }[] = [];
   // Доли считаются от общей суммы и не зависят от выбора, поэтому соседние
   // секторы при выделении категории не меняют ни размер, ни положение.
   // position копит «сырые» проценты: границы округляются только при выводе,
@@ -96,8 +105,9 @@ export function buildDonutLayout(
       };
     }
     position = next;
+    segments.push({ id: item.id, from: start, to: end });
     return `${color} ${start}% ${end}%`;
   });
 
-  return { ring: `conic-gradient(${stops.join(", ")})`, active };
+  return { ring: `conic-gradient(${stops.join(", ")})`, active, segments };
 }

@@ -1,5 +1,5 @@
 // apps/mini-app/src/App.tsx
-import { Component, StrictMode, Fragment, useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Component, StrictMode, Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent as ReactFocusEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import * as LucideIcons from "lucide-react";
 import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy } from "firebase/firestore";
@@ -17,7 +17,7 @@ import {
   type Translator,
 } from "./i18n";
 import { buildDonutLayout, type CategoryStat } from "./chartGradient";
-import { nextSelectedCategoryIdOnOutsideTap } from "./chartInteraction";
+import { nextSelectedCategoryIdOnOutsideTap, sectorAtPoint } from "./chartInteraction";
 import { cardDropIndex, cardDropLineY, type CardDragRect } from "./cardDrag";
 import { matchCategory } from "./categoryMatch";
 // Даты чека: время с принта («стена часов»), без сдвига на часовой пояс -> ./receiptDate
@@ -1049,6 +1049,23 @@ useEffect(() => {
     setSelectedCategoryId((current) => (current === categoryId ? undefined : categoryId));
   };
 
+  // Тап по сектору диаграммы — та же логика, что и тап по карточке категории:
+  // выбирает категорию (повторный тап снимает выбор). Тап по «дырке» или мимо
+  // кольца выбора не касается и снимает его. Границы берём у того же билдера,
+  // что рисует градиент, поэтому зона тапа совпадает с нарисованным сектором.
+  const handleDonutClick = (event: ReactMouseEvent<HTMLSpanElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - (rect.left + rect.width / 2);
+    const y = event.clientY - (rect.top + rect.height / 2);
+    const sectorId = sectorAtPoint(x, y, donut.segments);
+    if (!sectorId) {
+      setSelectedCategoryId(undefined);
+      return;
+    }
+    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
+    toggleCategorySelection(sectorId);
+  };
+
   // Сброс выбора «мимо графика»: тап вне диаграммы и вне карточек категорий
   // (пустое место под сеткой, промежутки сетки, другие экраны) снимает выбор.
   // Правила и список «своих» блоков — в ./chartInteraction
@@ -2048,13 +2065,19 @@ useEffect(() => {
             {[...groupedExpenses.entries()].map(([catId, expenses]) => {
               const category = expenses[0].category;
               const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+              // Цвет категории в списке трат — тот же оттенок, что у её сектора на
+              // диаграмме и точки в легенде (палитра строится по индексу категории)
+              const categoryColor = categoryColorById.get(catId) ?? fallbackCategoryColor;
               return (
-                // Плашки всех категорий нейтральные — как «Все траты»:
-                // цвет категории в списке трат не используется
-                <div className="accordion-item" key={catId}>
+                <div
+                  className="accordion-item accordion-item--category"
+                  key={catId}
+                  style={{ "--category-color": categoryColor.chart } as CSSProperties}
+                >
                   <button className={`accordion-trigger ${expandedAccId.has(catId) ? "active" : ""}`} onClick={() => toggleAccordion(catId)}>
                     <div className="accordion-left">
                       <span className="mini-icon">{category?.icon ? <Icon name={category.icon} /> : "•"}</span>
+                      <span className="category-legend-dot" />
                       <span>{category?.name ?? t("categoryOther")}</span>
                     </div>
                     <div className="accordion-right">
@@ -2168,6 +2191,9 @@ useEffect(() => {
             {/* Кольцо живёт в фиксированном габарите 190×190: выбранный сектор
                 выступает наружу отдельным слоем, а не растягивает всё кольцо */}
             <div className="donut">
+              {/* Слой 0: невидимая зона тапа по диаграмме. Ловит тапы и по секторам
+                  (выбирают категорию), и по «дырке» (снимают выбор) */}
+              <span className="donut-hit" aria-hidden="true" onClick={handleDonutClick} />
               {/* Слой 1: базовое кольцо. В обычном состоянии все секторы сочные;
                   при выборе остальные получают свой оттенок с alpha 0.25
                   (см. buildDonutLayout) и короткую анимацию проявления */}
@@ -2246,6 +2272,9 @@ useEffect(() => {
                   <span className="category-icon-wrapper">
                     <Icon name={category.icon || "other"} />
                   </span>
+                  {/* Точка легенды: тот же оттенок, что у сектора диаграммы и карточки
+                      в списке трат — единый цвет категории во всех трёх местах */}
+                  <span className="category-legend-dot" style={{ background: categoryColor.chart }} />
                   <b>{category.name}</b>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
                     <small>{formatMoney(categoryStat?.amount ?? 0)}</small>

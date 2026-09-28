@@ -617,11 +617,24 @@ input:focus, select:focus { border-color: var(--accent-color); }
   margin: 4px auto 12px;
   border-radius: 50%;
 }
+/* Слой 0: невидимая зона тапа по диаграмме. Сами кольцевые слои декоративные
+   (pointer-events: none), поэтому тапы по секторам и по «дырке» разбирает он.
+   inset: -8px — с запасом на выступ выбранного сектора (.donut-pop), иначе тап
+   по нему пролетал бы мимо. overflow: hidden + border-radius дают круглую зону
+   тапа: без overflow углы квадрата тоже считались бы попаданием в диаграмму */
+.donut-hit {
+  position: absolute;
+  inset: -8px;
+  z-index: 3;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+}
 .donut-ring,
 .donut-pop {
   position: absolute;
   border-radius: 50%;
-  pointer-events: none; /* слои декоративные: тапы обрабатывает .chart-tab */
+  pointer-events: none; /* слои декоративные: тапы ловит .donut-hit */
 }
 .donut-ring {
   inset: 0;
@@ -704,9 +717,21 @@ input:focus, select:focus { border-color: var(--accent-color); }
 .mini-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; color: inherit; background: transparent; }
 .mini-icon svg { width: 15px; height: 15px; }
 
-/* Плашки категорий на экране «Траты» больше не окрашиваются в цвет категории:
-   все группы выглядят как нейтральная карточка «Все траты» (.accordion-item),
-   поэтому отдельные правила для .accordion-item--category удалены */
+/* Цветная точка категории: одинаковая в легенде (сетка под графиком) и в
+   карточке категории в списке трат. В карточке цвет берётся из --category-color,
+   в сетке — из инлайн-стиля, оттенок в обоих случаях один */
+.category-legend-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--category-color, currentColor);
+}
+
+/* Карточка категории в списке трат: левая кромка в цвете категории — тот же
+   оттенок, что у сектора диаграммы и точки легенды */
+.accordion-item--category { border-left: 4px solid var(--category-color, transparent); }
+.accordion-item--category .accordion-content { border-top-color: color-mix(in srgb, var(--category-color, transparent) 25%, var(--border-color)); }
 
 .savings-card { padding: 30px 22px; text-align: center; }
 .savings-card h2 { margin: 12px 0 8px; }
