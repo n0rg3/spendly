@@ -324,6 +324,30 @@ test("CORS: github.io получает свой origin, чужой домен �
   assert.equal(noOrigin.status, 204);
 });
 
+test("принимает сырой текст чека (text) без скачивания страницы и категоризует по списку", async () => {
+  resetAi();
+  const receiptText = ["VODA MINERALNA 0,5L KNJA KOM (Ђ)", "1,00 57,99 57,99", "Укупан износ 57,99"].join("\n");
+  const { status, body } = await invoke({
+    body: { text: receiptText, categories: ["Продукты", "Дом"] },
+  });
+
+  assert.equal(status, 200);
+  // Страница чека не запрашивалась: текст пришёл от клиента
+  assert.equal(receiptCalls, 0, "при наличии text страница чека не скачивается");
+  // Текст ушёл в модель как есть (без HTML-разбора)
+  assert.match(geminiRequest.contents[0].parts[0].text, /VODA MINERALNA 0,5L KNJA KOM \(Ђ\)/);
+  assert.deepEqual(body.items.map((i) => i.category), ["Продукты", "Продукты", "Дом"]);
+});
+
+test("ни qrUrl, ни text — понятная ошибка 400", async () => {
+  resetAi();
+  const { status, body } = await invoke({ body: { categories: ["Еда"] } });
+
+  assert.equal(status, 400);
+  assert.match(body.error, /qrUrl/);
+  assert.match(body.error, /text/);
+});
+
 test("SSRF: разрешены только https-URL на *.purs.gov.rs", async () => {
   const evil = await invoke({ body: { qrUrl: "https://evil.com/steal" } });
   assert.equal(evil.status, 400);

@@ -309,39 +309,50 @@ export default async function handler(req, res) {
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
     const qrUrl = String(body.qrUrl || "").trim();
-    if (!qrUrl) {
-      return send(400, { error: "Передайте URL чека из QR-кода (qrUrl)" });
+    // Контракт API принимает ЛИБО qrUrl (Mini App передаёт сырой QR и страницу чека
+    // скачивает сама функция), ЛИБО text — уже готовый сырой текст чека (например, вставленный
+    // вручную). Если пришёл text, страницу чека не запрашиваем вовсе.
+    const rawText = typeof body.text === "string" ? body.text.trim() : "";
+    if (!qrUrl && !rawText) {
+      return send(400, { error: "Передайте URL чека из QR-кода (qrUrl) или сырой текст чека (text)" });
     }
 
-    // Валидация: только https и домен налоговой Сербии (защита от SSRF)
-    let url;
-    try {
-      url = new URL(qrUrl);
-    } catch {
-      return send(400, { error: "Некорректный URL чека" });
-    }
-    if (url.protocol !== "https:" || !/^(?:[a-z0-9-]+\.)*purs\.gov\.rs$/.test(url.hostname)) {
-      return send(400, { error: "URL должен вести на suf.purs.gov.rs (сербский e-чек)" });
+    let receiptText;
+    if (rawText) {
+      // Текст от клиента: только ограничиваем длину, как и текст со страницы чека
+      receiptText = rawText.slice(0, MAX_RECEIPT_TEXT_LENGTH);
+    } else {
+      // Валидация: только https и домен налоговой Сербии (защита от SSRF)
+      let url;
+      try {
+        url = new URL(qrUrl);
+      } catch {
+        return send(400, { error: "Некорректный URL чека" });
+      }
+      if (url.protocol !== "https:" || !/^(?:[a-z0-9-]+\.)*purs\.gov\.rs$/.test(url.hostname)) {
+        return send(400, { error: "URL должен вести на suf.purs.gov.rs (сербский e-чек)" });
+      }
+
+      let response;
+      try {
+        // Повтор внутри fetchReceiptPage: холодный/подвисший сайт чека не должен
+        // требовать от пользователя повторного сканирования
+        response = await fetchReceiptPage(url);
+      } catch (error) {
+        console.error("Failed to fetch receipt page:", error);
+        const siteStatus = error?.status;
+        return send(502, {
+          error:
+            siteStatus && siteStatus < 500
+              ? `Сайт чека вернул ошибку: HTTP ${siteStatus}`
+              : "Сайт чека недоступен, попробуйте позже",
+        });
+      }
+
+      // Сырой текст страницы чека -> единственный вызов Gemini (разбор + категоризация)
+      receiptText = extractReceiptText(await response.text());
     }
 
-    let response;
-    try {
-      // Повтор внутри fetchReceiptPage: холодный/подвисший сайт чека не должен
-      // требовать от пользователя повторного сканирования
-      response = await fetchReceiptPage(url);
-    } catch (error) {
-      console.error("Failed to fetch receipt page:", error);
-      const siteStatus = error?.status;
-      return send(502, {
-        error:
-          siteStatus && siteStatus < 500
-            ? `Сайт чека вернул ошибку: HTTP ${siteStatus}`
-            : "Сайт чека недоступен, попробуйте позже",
-      });
-    }
-
-    // Сырой текст страницы чека -> единственный вызов Gemini (разбор + категоризация)
-    const receiptText = extractReceiptText(await response.text());
     if (!receiptText) {
       return send(422, { error: "Не удалось распознать структуру чека" });
     }

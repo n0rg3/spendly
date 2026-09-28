@@ -76,15 +76,29 @@ Firestore отдавал дашборд, список категорий был 
 ## Эндпоинт
 
 ```
-POST https://<project>.vercel.app/api/receipts/parse
-POST https://<project>.vercel.app/api/parse-receipt   (тот же handler, алиас из vercel.json)
+POST https://serverless-tawny-xi-39.vercel.app/api/parse-receipt   ← канонический путь (использует Mini App)
+POST https://serverless-tawny-xi-39.vercel.app/api/receipts/parse  ← алиас из vercel.json (тот же handler)
 ```
+
+Адрес зафиксирован в клиенте константами `RECEIPT_API_BASE` / `RECEIPT_API_PATH`
+(`apps/mini-app/src/main.tsx`): `VITE_API_URL` переопределяет только базу (в dev пустое значение
+уходит на vite-прокси `/api` → `localhost:3001`), а в продакшене без переменной используется
+именно этот деплой — приложение больше не падает с «API не настроен».
 
 Запрос:
 
 ```json
 { "qrUrl": "https://suf.purs.gov.rs/v/?vl=...", "categories": ["Еда", "Транспорт"], "lang": "ru" }
 ```
+
+Вместо `qrUrl` можно передать уже готовый сырой текст чека — тогда страница не скачивается:
+
+```json
+{ "text": "VODA MINERALNA 0,5L KNJA KOM (Ђ)\n1,00 57,99 57,99\nУкупан износ 57,99", "categories": ["Еда"] }
+```
+
+> Mini App передаёт именно `qrUrl`: у клиента есть только содержимое QR, а страницу `suf.purs.gov.rs`
+> скачивает и разбирает сама функция. Вариант с `text` — для ручной вставки текста и других клиентов.
 
 `categories` опциональны: Mini App всегда передаёт свои (или стартовый список языка), а функция
 использует их как fallback по `lang`, если список всё-таки пустой:

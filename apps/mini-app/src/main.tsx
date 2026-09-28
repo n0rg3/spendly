@@ -235,6 +235,13 @@ function currentMonthKey() {
 // Разбор чека целиком делает Gemini на сервере и отдаёт dateTime уже в ISO 8601,
 // поэтому на клиенте не осталось ни регэкспов формата сербского чека, ни кэша категорий.
 
+// ===== Эндпоинт распознавания чеков (зафиксирован) =====
+// Продакшен-деплой serverless-функции. Алиас /api/receipts/parse из vercel.json ведёт сюда же,
+// но клиент ходит напрямую по каноническому пути — так адрес не зависит от rewrites.
+// VITE_API_URL переопределяет только БАЗУ (dev: пусто -> vite-прокси /api -> localhost:3001).
+const RECEIPT_API_BASE = "https://serverless-tawny-xi-39.vercel.app";
+const RECEIPT_API_PATH = "/api/parse-receipt";
+
 // Дебаунс повторных срабатываний QR-сканера и таймаут ожидания ответа распознавания.
 // Клиент ждёт ЧУТЬ ДОЛЬШЕ лимита функции на Vercel (maxDuration: 60 с): так на экране
 // появится реальная ошибка сервера, а не ложное «не дождались» из-за собственного таймаута
@@ -1291,25 +1298,34 @@ useEffect(() => {
     //   dev: пусто -> vite проксирует /api -> http://localhost:3001
     // Клиент НИКОГДА не обращается к localhost, если открыт не на localhost.
     const isLocalPage = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-    const apiUrl = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
+    const configuredBase = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
 
-    if (!apiUrl) {
-      if (!isLocalPage) {
-        throw new Error(t("apiNotConfigured"));
-      }
-      console.info("[receipt] VITE_API_URL пуст — dev-режим, запрос через vite-прокси /api -> localhost:3001");
-    } else if (/change-me|your-app|example\.com/i.test(apiUrl)) {
-      throw new Error(t("apiPlaceholder", { url: apiUrl }));
-    } else if (!isLocalPage && /^(https?:\/\/)?(localhost|127\.0\.0\.1)/i.test(apiUrl)) {
-      throw new Error(t("apiLocalhost", { url: apiUrl }));
+    if (/change-me|your-app|example\.com/i.test(configuredBase)) {
+      throw new Error(t("apiPlaceholder", { url: configuredBase }));
+    }
+    if (!isLocalPage && /^(https?:\/\/)?(localhost|127\.0\.0\.1)/i.test(configuredBase)) {
+      throw new Error(t("apiLocalhost", { url: configuredBase }));
     }
 
-    // Тело запроса формируется из аргументов: на первом же вызове на сервер уходят
-    // и реальный QR, и РЕАЛЬНЫЕ категории пользователя, и язык (для серверного fallback)
-    const requestBody = { qrUrl, categories, lang: langRef.current };
-    console.log("[AI Parse Sent]:", requestBody);
+    // База: явный VITE_API_URL -> продакшен-URL из константы.
+    // Пустая база допустима только на localhost (dev-режим, vite-прокси /api).
+    const apiBase = configuredBase || (isLocalPage ? "" : RECEIPT_API_BASE);
+    const endpoint = `${apiBase}${RECEIPT_API_PATH}`;
+    if (!configuredBase) {
+      console.info(
+        isLocalPage
+          ? "[receipt] VITE_API_URL пуст — dev-режим, запрос через vite-прокси /api -> localhost:3001"
+          : `[receipt] VITE_API_URL пуст — использую зафиксированный продакшен-адрес ${RECEIPT_API_BASE}`,
+      );
+    }
 
-    const response = await fetch(`${apiUrl}/api/receipts/parse`, {
+    // Тело запроса: сырой QR из события + категории пользователя + язык для серверного fallback.
+    // (Сервер принимает и { text } — сырой текст чека, — но у клиента его нет: страницу
+    //  suf.purs.gov.rs скачивает и разбирает сама функция.)
+    const requestBody = { qrUrl, categories, lang: langRef.current };
+    console.log("[AI Parse Sent]:", { endpoint, ...requestBody });
+
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
