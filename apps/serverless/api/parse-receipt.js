@@ -16,14 +16,97 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 const RECEIPT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-// Список категорий из ТЗ — используется, если клиент не передал свои
-const DEFAULT_CATEGORIES = ["Продукты", "Тусичи", "Дом", "Транспорт", "Развлечения", "Остальное"];
+// СТАРТОВЫЕ категории Mini App по языкам — ровно те же названия, что создаёт клиент
+// в defaultDashboard (apps/mini-app/src/main.tsx). Это только fallback: обычно клиент
+// присылает свои категории. Список обязан совпадать с клиентским, иначе названия из ответа
+// модели не сматчатся с категориями пользователя и позиции приедут без категорий.
+const DEFAULT_CATEGORIES_BY_LANG = {
+  ru: ["Еда", "Транспорт", "Покупки"],
+  en: ["Food", "Transport", "Shopping"],
+  sr: ["Hrana", "Prevoz", "Kupovina"],
+};
+const DEFAULT_CATEGORIES = DEFAULT_CATEGORIES_BY_LANG.ru;
+const defaultCategoriesForLang = (lang) =>
+  DEFAULT_CATEGORIES_BY_LANG[String(lang ?? "").trim().toLowerCase()] ?? DEFAULT_CATEGORIES;
 
 // Модель по умолчанию: Structured Outputs (responseSchema) поддерживается Gemini 2.5 Flash
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 
 // Страница чека может быть большой; модели достаточно текста покупки
 const MAX_RECEIPT_TEXT_LENGTH = 20_000;
+
+// Таймаут запроса страницы чека и один быстрый повтор на транзиентный сбой.
+// Первый (холодный) запрос к сайту чека/Gemini иногда падает — именно поэтому раньше
+// распознавание «срабатывало только со 2-3 раза». Повтор лечит это без участия пользователя.
+const RECEIPT_FETCH_TIMEOUT_MS = 20_000;
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+const MAX_ATTEMPTS = 2;
+// Пауза между попытками; в тестах выключается через RECEIPT_RETRY_DELAY_MS=0
+const retryDelayMs = () => {
+  const value = Number(process.env.RECEIPT_RETRY_DELAY_MS);
+  return Number.isFinite(value) && value >= 0 ? value : 500;
+};
+
+// Название категории в сравнимом виде: регистр, пробелы (в т.ч. неразрывные) и Unicode-форма
+// не должны мешать сопоставлению «категория от модели -> категория пользователя»
+function normalizeCategoryName(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\u00a0\u2007\u2009\u202f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+// Один быстрый повтор для транзиентных сбоев (сеть, таймаут, 429/5xx)
+async function withRetry(run, shouldRetry) {
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= MAX_ATTEMPTS || !shouldRetry(error)) throw error;
+      console.warn(`receipt: попытка ${attempt} не удалась (${error?.message ?? error}) — повтор`);
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs()));
+    }
+  }
+  throw lastError;
+}
+
+// Транзиентная ошибка: сеть/таймаут/5xx/429 — то, что имеет смысл повторить.
+// Ошибки схемы/конфигурации (400/403/404) повторять бессмысленно.
+const isTransient = (error) => {
+  const status = error?.status ?? error?.response?.status ?? error?.response?.error?.code;
+  if (typeof status === "number") return RETRYABLE_STATUS.has(status);
+  // SDK не всегда отдаёт статус числом — ищем его в тексте ошибки
+  const match = /\b(\d{3})\b/.exec(String(error?.message ?? ""));
+  if (match) {
+    const code = Number(match[1]);
+    if (code >= 400 && code < 600) return RETRYABLE_STATUS.has(code);
+  }
+  // Статуса нет вообще (DNS, обрыв соединения, таймаут) — повторяем
+  return true;
+};
+
+// Скачивание страницы чека с повтором на транзиентных ошибках
+async function fetchReceiptPage(url) {
+  return withRetry(
+    async () => {
+      const response = await fetch(url, {
+        headers: { "User-Agent": RECEIPT_USER_AGENT },
+        signal: AbortSignal.timeout(RECEIPT_FETCH_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        const error = new Error(`Сайт чека вернул ошибку: HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      return response;
+    },
+    isTransient,
+  );
+}
 
 // Системная инструкция: правила разбора чека и категоризации
 const SYSTEM_INSTRUCTION = [
@@ -96,9 +179,11 @@ export function extractReceiptText(html) {
     .slice(0, MAX_RECEIPT_TEXT_LENGTH);
 }
 
-// Ответ модели -> формат API: числа числами, категория только из списка пользователя
+// Ответ модели -> формат API: числа числами, категория только из списка пользователя.
+// Сравнение названий — нормализованное: модель может вернуть «Продукты», «продукты »
+// или с неразрывным пробелом, и это не должно терять категорию.
 function normalizeReceipt(payload, categoriesList) {
-  const allowed = new Set(categoriesList);
+  const allowed = new Map(categoriesList.map((name) => [normalizeCategoryName(name), name]));
   const rawItems = Array.isArray(payload.items) ? payload.items : [];
 
   const items = rawItems
@@ -106,13 +191,14 @@ function normalizeReceipt(payload, categoriesList) {
       const total = Number(item?.total);
       const price = Number(item?.price);
       const qty = Number(item?.qty);
+      // В ответе отдаём написание пользователя, а не модели
+      const category = typeof item?.category === "string" ? allowed.get(normalizeCategoryName(item.category)) : undefined;
       return {
         name: String(item?.name ?? "").trim(),
         qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
         price: Number.isFinite(price) ? price : Number.isFinite(total) ? total : 0,
         total: Number.isFinite(total) ? total : 0,
-        category:
-          typeof item?.category === "string" && allowed.has(item.category) ? item.category : null,
+        category: category ?? null,
       };
     })
     .filter((item) => item.name && item.total > 0);
@@ -217,17 +303,18 @@ export default async function handler(req, res) {
 
     let response;
     try {
-      response = await fetch(url, {
-        headers: { "User-Agent": RECEIPT_USER_AGENT },
-        signal: AbortSignal.timeout(15_000),
-      });
+      // Повтор внутри fetchReceiptPage: холодный/подвисший сайт чека не должен
+      // требовать от пользователя повторного сканирования
+      response = await fetchReceiptPage(url);
     } catch (error) {
       console.error("Failed to fetch receipt page:", error);
-      return send(502, { error: "Сайт чека недоступен, попробуйте позже" });
-    }
-
-    if (!response.ok) {
-      return send(502, { error: `Сайт чека вернул ошибку: HTTP ${response.status}` });
+      const siteStatus = error?.status;
+      return send(502, {
+        error:
+          siteStatus && siteStatus < 500
+            ? `Сайт чека вернул ошибку: HTTP ${siteStatus}`
+            : "Сайт чека недоступен, попробуйте позже",
+      });
     }
 
     // Сырой текст страницы чека -> единственный вызов Gemini (разбор + категоризация)
@@ -236,19 +323,28 @@ export default async function handler(req, res) {
       return send(422, { error: "Не удалось распознать структуру чека" });
     }
 
-    // Категории пользователя опциональны; по умолчанию — фиксированный список из ТЗ.
-    // Пустой список — тревожный признак: категории из ответа модели не сматчатся
-    // с категориями пользователя, поэтому такой случай пишем в лог
+    // Категории пользователя опциональны; по умолчанию — стартовые категории того же языка,
+    // что и в Mini App. Пустой список — тревожный признак: категории из ответа модели
+    // не сматчатся с категориями пользователя, поэтому такой случай пишем в лог
     const categoriesFromClient = Array.isArray(body.categories)
-      ? body.categories.map(String).filter(Boolean)
+      ? body.categories.map(String).map((name) => name.trim()).filter(Boolean)
       : [];
+    const lang = typeof body.lang === "string" ? body.lang.trim().toLowerCase() : "";
+    const fallbackCategories = defaultCategoriesForLang(lang);
     if (categoriesFromClient.length === 0) {
-      console.warn("parse-receipt: клиент не передал categories — используется список по умолчанию");
+      console.warn(
+        `parse-receipt: клиент не передал categories — беру стартовые категории языка «${lang || "ru"}»:`,
+        fallbackCategories,
+      );
     }
-    const categoriesList = categoriesFromClient.length > 0 ? categoriesFromClient : DEFAULT_CATEGORIES;
+    const categoriesList = categoriesFromClient.length > 0 ? categoriesFromClient : fallbackCategories;
 
     try {
-      const receipt = await parseReceiptWithGemini(receiptText, categoriesList);
+      // Повтор на транзиентной ошибке Gemini: первый (холодный) вызов иногда падает
+      const receipt = await withRetry(
+        () => parseReceiptWithGemini(receiptText, categoriesList),
+        (error) => error?.status !== 503 && isTransient(error),
+      );
       if (receipt.items.length === 0) {
         return send(422, { error: "Не удалось распознать структуру чека" });
       }

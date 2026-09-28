@@ -26,21 +26,42 @@ const AI_RECEIPT = {
 };
 
 const realFetch = globalThis.fetch;
-// Состояние мока: последний запрос к Gemini, ответ модели и подмена HTML чека
+// Состояние мока: последний запрос к Gemini, ответ модели и подмена HTML чека.
+// receiptFails/geminiFails — сколько первых попыток должно упасть (для проверки ретраев).
 let geminiUrl = null;
 let geminiRequest = null;
 let geminiReply = AI_RECEIPT;
 let geminiStatus = 200;
 let receiptHtmlOverride = null;
+let receiptFails = 0;
+let geminiFails = 0;
+let geminiCalls = 0;
+let receiptCalls = 0;
 
 globalThis.fetch = async (url, options) => {
   const target = String(url);
   if (target.includes("purs.gov.rs")) {
+    receiptCalls += 1;
+    if (receiptFails > 0) {
+      receiptFails -= 1;
+      // Как ведёт себя сеть при холодном/подвисшем сайте чека
+      throw new TypeError("fetch failed");
+    }
     return { ok: true, status: 200, text: async () => receiptHtmlOverride ?? receiptHtml };
   }
   if (target.includes("generateContent")) {
     geminiUrl = target;
     geminiRequest = JSON.parse(options?.body ?? "{}");
+    geminiCalls += 1;
+    if (geminiFails > 0) {
+      geminiFails -= 1;
+      return {
+        ok: false,
+        status: 500,
+        statusText: "Error",
+        json: async () => ({ error: { message: "mock gemini error" } }),
+      };
+    }
     if (geminiStatus !== 200) {
       return {
         ok: false,
@@ -70,11 +91,17 @@ function resetAi({ apiKey = "test-key" } = {}) {
   else process.env.GEMINI_API_KEY = apiKey;
   delete process.env.GEMINI_BASE_URL;
   delete process.env.GEMINI_MODEL;
+  // Ретраи не должны тормозить тесты
+  process.env.RECEIPT_RETRY_DELAY_MS = "0";
   geminiUrl = null;
   geminiRequest = null;
   geminiReply = AI_RECEIPT;
   geminiStatus = 200;
   receiptHtmlOverride = null;
+  receiptFails = 0;
+  geminiFails = 0;
+  geminiCalls = 0;
+  receiptCalls = 0;
 }
 
 // Вызов handler с моком node:http-ответа (как отдаёт @vercel/node)
@@ -147,14 +174,70 @@ test("GEMINI_MODEL переопределяет модель по умолчан
   assert.match(geminiUrl, /models\/gemini-2\.5-flash-lite:generateContent/);
 });
 
-test("без categories используется список по умолчанию — и он же уходит в схему", async () => {
+test("без categories используется СТАРТОВЫЙ список языка клиента — и он же уходит в схему", async () => {
   resetAi();
   await invoke({ body: { qrUrl: QR_URL } });
 
+  // Fallback обязан совпадать с категориями нового пользователя в Mini App (defaultDashboard),
+  // иначе названия из ответа модели не сматчатся с категориями пользователя
   assert.deepEqual(
     geminiRequest.generationConfig.responseSchema.properties.items.items.properties.category.enum,
-    ["Продукты", "Тусичи", "Дом", "Транспорт", "Развлечения", "Остальное"],
+    ["Еда", "Транспорт", "Покупки"],
   );
+});
+
+test("lang=en задаёт англоязычный fallback категорий, список пользователя всегда важнее", async () => {
+  resetAi();
+  await invoke({ body: { qrUrl: QR_URL, lang: "en" } });
+
+  assert.deepEqual(
+    geminiRequest.generationConfig.responseSchema.properties.items.items.properties.category.enum,
+    ["Food", "Transport", "Shopping"],
+  );
+
+  resetAi();
+  await invoke({ body: { qrUrl: QR_URL, lang: "en", categories: ["Еда"] } });
+  assert.deepEqual(
+    geminiRequest.generationConfig.responseSchema.properties.items.items.properties.category.enum,
+    ["Еда"],
+  );
+});
+
+test("категория модели сопоставляется с категорией пользователя без учёта регистра и пробелов", async () => {
+  resetAi();
+  geminiReply = {
+    ...AI_RECEIPT,
+    items: [
+      { name: "VODA", qty: 1, price: 57.99, total: 57.99, category: "  продукты " },
+      { name: "KESA", qty: 1, price: 2, total: 2, category: "ДОМ" },
+      { name: "X", qty: 1, price: 1, total: 1, category: "Чужое" },
+    ],
+  };
+  const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Продукты", "Дом"] } });
+
+  assert.equal(status, 200);
+  // Написание в ответе — пользователя, чужая категория по-прежнему null
+  assert.deepEqual(body.items.map((i) => i.category), ["Продукты", "Дом", null]);
+});
+
+test("первый (холодный) сбой сайта чека лечится повтором без участия пользователя", async () => {
+  resetAi();
+  receiptFails = 1;
+  const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Продукты"] } });
+
+  assert.equal(status, 200);
+  assert.equal(receiptCalls, 2, "страница чека должна быть запрошена повторно");
+  assert.equal(body.items.length, 3);
+});
+
+test("транзиентная ошибка Gemini повторяется один раз и затем отдаёт результат", async () => {
+  resetAi();
+  geminiFails = 1;
+  const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Продукты", "Дом"] } });
+
+  assert.equal(status, 200);
+  assert.equal(geminiCalls, 2, "Gemini должен быть вызван повторно после сбоя");
+  assert.deepEqual(body.items.map((i) => i.category), ["Продукты", "Продукты", "Дом"]);
 });
 
 test("категория не из списка пользователя сбрасывается в null", async () => {

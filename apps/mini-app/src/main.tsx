@@ -237,6 +237,8 @@ function currentMonthKey() {
 // Дебаунс повторных срабатываний QR-сканера и таймаут ожидания ответа распознавания
 const PARSE_DEBOUNCE_MS = 300;
 const PARSE_TIMEOUT_MS = 45_000;
+// Сколько ждём дашборд из Firestore, прежде чем отправить стартовые категории языка
+const PARSE_CATEGORIES_TIMEOUT_MS = 5000;
 
 // Разобранный чек: позиции приходят вместе со своими категориями одним объектом,
 // поэтому обновление состояния — атомарное (один setState на весь результат)
@@ -259,6 +261,18 @@ function formatReceiptDateTime(value: string | null): string | null {
   if (!iso) return null;
   const { date, time } = toLocalDateTime(iso);
   return `${date} ${time}`;
+}
+
+// Название категории в сравнимом виде: регистр, пробелы (в т.ч. неразрывные) и Unicode-форма
+// не должны мешать сопоставлению «категория от модели -> категория пользователя».
+// Та же нормализация работает на сервере (normalizeCategoryName в parse-receipt.js).
+function normalizeCategoryName(value: string | null | undefined): string {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\u00a0\u2007\u2009\u202f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function formatMonth(value: string, lang: Lang = "ru") {
@@ -1231,28 +1245,45 @@ useEffect(() => {
   // Актуальные категории без «устаревшего» state: ref следит за дашбордом и всегда
   // отдаёт последние данные, даже если рендер с новым state ещё не произошёл.
   // Это и была причина «категории определяются со 2-3 раза»: первый скан успевал уйти
-  // до загрузки дашборда, `categories` были пустыми, сервер подставлял дефолтный список
-  // из ТЗ, и названия категорий не совпадали с категориями пользователя.
+  // до загрузки дашборда, `categories` были пустыми, сервер подставлял свой список,
+  // и названия категорий не совпадали с категориями пользователя.
   const dashboardRef = useRef<Dashboard | undefined>(undefined);
   useEffect(() => {
     dashboardRef.current = dashboard;
   }, [dashboard]);
+
+  // Язык интерфейса тоже читаем через ref: обработчик сканера захвачен в момент нажатия,
+  // поэтому state здесь может быть «устаревшим»
+  const langRef = useRef<Lang>(lang);
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
 
   // Управление запросом распознавания: отмена зависших, защита от гонки и спама
   const parseAbortRef = useRef<AbortController | null>(null);
   const parseRequestIdRef = useRef(0);
   const lastParseAtRef = useRef(0);
 
-  // Категории пользователя ждём явно: Firestore может отдать дашборд с задержкой.
-  // Читаем ref (актуальное значение), а не state — не зависим от момента перерендера.
-  const waitForUserCategories = async (timeoutMs = 5000): Promise<string[]> => {
+  // Категории, которые уходят в Gemini. Список НИКОГДА не бывает пустым:
+  // 1) сначала ждём реальные категории пользователя из Firestore (через ref — без
+  //    «устаревшего» state, иначе первый скан уходил до загрузки дашборда);
+  // 2) если дашборд не успел, отдаём СТАРТОВЫЕ категории текущего языка — ровно те же
+  //    названия, что лежат в Firestore у нового пользователя (defaultDashboard).
+  // Пустой список отправлять нельзя: сервер подставил бы свой список, названия не совпали
+  // бы с категориями пользователя, и позиции приехали бы без категорий — это и есть
+  // «категории определяются только со 2-3 раза».
+  const resolveUserCategories = async (timeoutMs = PARSE_CATEGORIES_TIMEOUT_MS): Promise<string[]> => {
     const startedAt = Date.now();
     for (;;) {
-      const names = dashboardRef.current?.categories.map((category) => category.name) ?? [];
+      const names = (dashboardRef.current?.categories ?? []).map((category) => category.name);
       if (names.length > 0) return names;
       if (Date.now() - startedAt >= timeoutMs) {
-        console.warn(`[AI Parse] категории пользователя не загрузились за ${timeoutMs} мс`);
-        return [];
+        const fallbackNames = defaultDashboard(langRef.current).categories.map((category) => category.name);
+        console.warn(
+          `[AI Parse] дашборд не загрузился за ${timeoutMs} мс — отправляю стартовые категории языка «${langRef.current}»:`,
+          fallbackNames,
+        );
+        return fallbackNames;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 50));
     }
@@ -1280,8 +1311,8 @@ useEffect(() => {
     }
 
     // Тело запроса формируется из аргументов: на первом же вызове на сервер уходят
-    // и реальный QR, и РЕАЛЬНЫЕ категории пользователя
-    const requestBody = { qrUrl, categories };
+    // и реальный QR, и РЕАЛЬНЫЕ категории пользователя, и язык (для серверного fallback)
+    const requestBody = { qrUrl, categories, lang: langRef.current };
     console.log("[AI Parse Sent]:", requestBody);
 
     const response = await fetch(`${apiUrl}/api/receipts/parse`, {
@@ -1350,9 +1381,9 @@ useEffect(() => {
     }, PARSE_TIMEOUT_MS);
 
     try {
-      // Категории пользователя берём до запроса: если Firestore ещё не отдал дашборд,
-      // Gemini вернул бы свои дефолтные названия, и позиции остались бы без категорий
-      const categories = await waitForUserCategories();
+      // Категории пользователя берём ДО запроса и никогда не отправляем пустой список:
+      // Gemini получает enum ровно из категорий пользователя (+ язык для fallback)
+      const categories = await resolveUserCategories();
       if (requestId !== parseRequestIdRef.current) return;
 
       const receipt = await parseReceiptApi(qrUrl, categories, controller.signal);
@@ -1431,15 +1462,15 @@ useEffect(() => {
     if (draftAmount !== undefined && Number.isFinite(draftAmount) && draftAmount > 0) return draftAmount;
     return parsedReceipt?.items[index]?.total ?? 0;
   };
-  // Категория из ответа модели -> id категории пользователя. Сравниваем без учёта
-  // регистра и пробелов: даже если модель вернёт «Продукты » вместо «Продукты»,
+  // Категория из ответа модели -> id категории пользователя. Сравниваем нормализованно
+  // (регистр, пробелы, Unicode-форма): даже если модель вернёт «Продукты » вместо «Продукты»,
   // позиция всё равно получит нужную категорию
   const receiptItemCategoryId = (index: number) => {
     const draftId = receiptDrafts[index]?.categoryId;
     if (draftId !== undefined) return draftId;
-    const aiName = parsedReceipt?.items[index]?.category?.trim().toLowerCase();
+    const aiName = normalizeCategoryName(parsedReceipt?.items[index]?.category);
     if (!aiName) return "";
-    return dashboard?.categories.find((c) => c.name.trim().toLowerCase() === aiName)?.id ?? "";
+    return dashboard?.categories.find((c) => normalizeCategoryName(c.name) === aiName)?.id ?? "";
   };
 
   // «Сохранить все траты»: создаёт отдельную трату на каждую позицию чека
