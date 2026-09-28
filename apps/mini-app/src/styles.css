@@ -213,28 +213,30 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
    фоном темы. Подложки под иконкой нет — глиф стоит прямо на фоне карточки.
    Оттенок задаётся переменной --category-color (её ставит разметка плитки).
 
-   Высота ФИКСИРОВАНА (130px), чтобы все карточки были абсолютно одинаковыми:
-   раньше высота считалась от содержимого, и плитка с двухстрочным названием или
-   с плановым лимитом была выше соседних. 130px — это худший случай с запасом:
-   2 (рамка) + 12 (отступ) + 34 (иконка) + 6 + 2×13,75 (название) + 6 + 26 (сумма
-   и «от …») + 12 (отступ) + 2 (рамка) = 127,5 px. Ширину задаёт сетка
-   (4 равные колонки), так что обе стороны карточки совпадают. */
+   Размер ЖЁСТКО фиксирован: ширина — 4 равные колонки сетки, высота — 110px.
+   Квадрат (aspect-ratio: 1/1) не подошёл бы: колонка на телефоне ~85px, а иконка
+   с названием и суммой в неё не помещаются. 110px — это худший случай с запасом:
+   2 (рамка) + 8 (отступ) + 34 (иконка) + 6 + 14,4 (название) + 6 + 28,4 (сумма
+   с плановым лимитом) + 8 (отступ) + 2 (рамка) = 108,8px. Текст не может изменить
+   размер карточки: название — одна строка с троечием, сумма тоже в одну строку. */
 .category-icon-button {
   display: grid;
   gap: 6px;
-  /* Контент центрируем: при фиксированной высоте однострочное название не прижимается к верху */
+  /* Контент центрируем по вертикали и горизонтали: отступы до краёв выглядят
+     одинаковыми при любой длине текста */
   align-content: center;
   justify-items: center;
   min-width: 0;
-  height: 130px;
-  /* Отступы по краям текста — 2px (по бокам), 12px сверху и снизу */
-  padding: 12px 2px 12px;
+  height: 110px;
+  /* По бокам 2px — текст получает максимум ширины и реже сокращается */
+  padding: 8px 2px;
   border-radius: 18px;
   /* Рамка 2px — исходный габарит плитки: без неё карточки «сжимаются» на 4px */
   border: 2px solid var(--category-color, var(--border-color));
   background: var(--secondary-bg-color);
   color: var(--text-color);
   text-align: center;
+  overflow: hidden;
   transition: transform .15s ease, box-shadow .15s ease;
 }
 
@@ -254,29 +256,33 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   transition: transform .15s ease;
 }
 
-/* Название категории: показываем целиком, переносом на две строки. Раньше здесь
-   стояли nowrap + ellipsis, и длинные названия обрезались многоточием */
+/* Название категории: строго одна строка, длинное сокращается троечием и НИКОГДА
+   не растягивает карточку (высота задана фиксированно) */
 .category-icon-button b {
   width: 100%;
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
-  line-height: 1.25;
+  line-height: 1.2;
   color: inherit;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* Сумма и плановый лимит: колонкой по центру, без отрицательного отступа
-   (он наезжал на название) */
+/* Сумма и плановый лимит: компактно, по одной строке, тоже с троечием */
 .category-icon-button small {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 650;
   line-height: 1.2;
   color: inherit;
   opacity: .85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .category-tile-amount { display: grid; justify-items: center; gap: 2px; width: 100%; min-width: 0; }
-.category-tile-amount small { max-width: 100%; overflow-wrap: anywhere; }
+.category-tile-amount small { max-width: 100%; }
 
 /* Выбранная категория (её сектор увеличен на диаграмме): цветная рамка остаётся,
    акцент даёт лёгкая заливка оттенком категории и увеличенная иконка */
