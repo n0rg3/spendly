@@ -207,7 +207,8 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .month-total small { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
 .month-total b { margin-top: 3px; color: var(--link-color); font-size: 16px; letter-spacing: -.3px; }
 
-.category-icon-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 10px; }
+/* Зазор между карточками категорий: 4 px по вертикали и по горизонтали */
+.category-icon-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
 /* Плитка категории: карточка с цветной обводкой 2px в оттенке категории и обычным
    фоном темы. Подложки под иконкой нет — глиф стоит прямо на фоне карточки.
    Оттенок задаётся переменной --category-color (её ставит разметка плитки). */
