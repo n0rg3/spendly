@@ -6,7 +6,7 @@ import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy } from "
 import { QRCodeSVG } from "qrcode.react";
 import Barcode, { type BarcodeProps } from "react-barcode";
 import { db } from "./firebase";
-import { getCategoryColor, GOLDEN_RATIO_STEP } from "./categoryColors";
+import { getCategoryColor } from "./categoryColors";
 import {
   ICON_LABELS,
   MONTHS,
@@ -200,7 +200,8 @@ const defaultDashboard = (lang: Lang): Dashboard => {
 };
 
 // Цвета категорий не хранятся константами: количество категорий динамическое,
-// палитра считается хэшем от названия — см. getCategoryColor в ./categoryColors
+// палитра генерируется по индексу через цветовой круг HSL — см. getCategoryColor
+// в ./categoryColors
 
 // Псевдо-категория: модалка траты открыта вручную (без категории).
 // Совпадение всегда по id (""), а позиция без категории попадает в «Остальное».
@@ -1057,41 +1058,49 @@ useEffect(() => {
     );
   };
 
+  // Палитра строится один раз на весь список категорий: оттенок = индекс * (360 / N),
+  // где N — количество категорий. Поэтому цвет закреплён за категорией (не меняется
+  // при смене месяца или пересчёте сумм), а при 10-20 категориях все оттенки разные.
+  // Псевдо-категория «Остальное» (траты без категории) получает замыкающий оттенок.
+  const OTHER_CATEGORY_ID = "other";
+  const categoryColorById = useMemo(() => {
+    const total = (dashboard?.categories.length ?? 0) + 1;
+    const colors = new Map<string, import("./categoryColors").CategoryColor>();
+    (dashboard?.categories ?? []).forEach((category, index) => {
+      colors.set(category.id, getCategoryColor(index, total));
+    });
+    colors.set(OTHER_CATEGORY_ID, getCategoryColor(dashboard?.categories.length ?? 0, total));
+    return colors;
+  }, [dashboard?.categories]);
+
+  // Запасной цвет, если категории нет в палитре (удалена или id устарел)
+  const fallbackCategoryColor = useMemo(
+    () => getCategoryColor((dashboard?.categories.length ?? 0) + 1, (dashboard?.categories.length ?? 0) + 2),
+    [dashboard?.categories.length],
+  );
+
   const categoryStats = useMemo<CategoryStat[]>(() => {
     const data = new Map<string, { id: string; name: string; amount: number; color: import("./categoryColors").CategoryColor }>();
 
     filteredExpenses.forEach((expense) => {
-      const key = expense.category?.id ?? "other";
+      const key = expense.category?.id ?? OTHER_CATEGORY_ID;
       const name = expense.category?.name ?? t("categoryOther");
       const current = data.get(key) ?? {
         id: key,
         name,
         amount: 0,
-        // Палитра детерминированно выводится из названия: одинаковые категории
-        // в диаграмме и в сетке всегда получают один и тот же hue
-        color: getCategoryColor(name),
+        // Цвет берётся из общей палитры: тот же оттенок у сектора диаграммы,
+        // плитки в сетке и подписи в центре кольца
+        color: categoryColorById.get(key) ?? fallbackCategoryColor,
       };
       current.amount += expense.amount;
       data.set(key, current);
     });
 
-    // Секторы рисуются по убыванию суммы, поэтому порядок в массиве = порядок
-    // секторов на кольце. Пересчитываем hue золотым сечением (шаг 137.5°):
-    // цвета остаются из той же палитры, что у карточек категорий, но у соседних
-    // секторов hue разводится, чтобы они не сливались
-    return [...data.values()]
-      .sort((a, b) => b.amount - a.amount)
-      .map((item, index) => ({
-        ...item,
-        color: getCategoryColor(item.name, index * GOLDEN_RATIO_STEP),
-      }));
-  }, [filteredExpenses, t]);
-
-  // Цвета плашек категорий в сетке под графиком = цвета их секторов на диаграмме
-  const categoryColorById = useMemo(
-    () => new Map(categoryStats.map((item) => [item.id, item.color])),
-    [categoryStats]
-  );
+    // Секторы рисуются по убыванию суммы: порядок в массиве = порядок секторов
+    // на кольце. Пропорции и цвета не зависят от того, что категория выбрана.
+    return [...data.values()].sort((a, b) => b.amount - a.amount);
+  }, [filteredExpenses, t, categoryColorById, fallbackCategoryColor]);
 
   const chartTotal = useMemo(
     () => categoryStats.reduce((sum, item) => sum + item.amount, 0),
@@ -1106,20 +1115,21 @@ useEffect(() => {
     const name = stat?.name ?? dashboard?.categories.find((item) => item.id === selectedCategoryId)?.name;
     // Категория удалена или id устарел — считаем, что выбор снят
     if (!name) return undefined;
-    const color = stat?.color ?? getCategoryColor(name);
+    // Цвет той же палитры, что у сектора: даже если трат в этом месяце нет
+    const color = stat?.color ?? categoryColorById.get(selectedCategoryId) ?? fallbackCategoryColor;
     return {
       id: selectedCategoryId,
       name,
       amount: stat?.amount ?? 0,
       color,
     };
-  }, [categoryStats, dashboard, selectedCategoryId]);
+  }, [categoryStats, categoryColorById, fallbackCategoryColor, dashboard, selectedCategoryId]);
 
-  // Диаграмма: габариты кольца и положение секторов фиксированы, а выделение
-  // выбранной категории делается приглушением остальных секторов (.donut-ring--dim)
-  // и отдельным слоем-выступом наружу (.donut-pop). Передаём id из
+  // Диаграмма: габариты кольца и положение секторов фиксированы. Выбор категории
+  // меняет только цвета: её сектор остаётся сочным и выходит отдельным слоем
+  // наружу (.donut-pop), остальные берут свой оттенок с alpha 0.25. Передаём id из
   // selectedCategoryMeta: если категория удалена или id устарел, билдер получает
-  // undefined — кольцо остаётся обычным, без приглушения и без выступа
+  // undefined — кольцо остаётся обычным, без затенения и без выступа
   const donut = useMemo(
     () => buildDonutLayout(categoryStats, selectedCategoryMeta?.id),
     [categoryStats, selectedCategoryMeta?.id]
@@ -2158,8 +2168,9 @@ useEffect(() => {
             {/* Кольцо живёт в фиксированном габарите 190×190: выбранный сектор
                 выступает наружу отдельным слоем, а не растягивает всё кольцо */}
             <div className="donut">
-              {/* Слой 1: базовое кольцо. При выборе мягко приглушается целиком —
-                  секторы не меняют ни размер, ни положение */}
+              {/* Слой 1: базовое кольцо. В обычном состоянии все секторы сочные;
+                  при выборе остальные получают свой оттенок с alpha 0.25
+                  (см. buildDonutLayout) и короткую анимацию проявления */}
               <span
                 aria-hidden="true"
                 className={`donut-ring${donut.active ? " donut-ring--dim" : ""}`}
@@ -2198,10 +2209,10 @@ useEffect(() => {
           <section className="chart-categories">
             <div className="category-icon-grid">
               {sortedCategories.map((category) => {
-                // Тот же цвет, что у сектора диаграммы: сначала берём цвет из
-                // статистики (там уже посчитан от названия), иначе считаем хэш
+                // Тот же оттенок, что у сектора диаграммы: палитра строится по индексу
+                // категории один раз для всего списка
                 const categoryColor =
-                  categoryColorById.get(category.id) ?? getCategoryColor(category.name);
+                  categoryColorById.get(category.id) ?? fallbackCategoryColor;
                 const isSelected = category.id === selectedCategoryId;
                 const categoryStat = categoryStats.find((item) => item.id === category.id);
                 return (

@@ -1,57 +1,51 @@
 // apps/mini-app/src/categoryColors.ts
-// Автогенерация палитры категорий: количество категорий динамическое,
-// поэтому цвет считается детерминированно из названия (одно имя → один цвет).
+// Динамическая генерация палитры категорий. Количество категорий у пользователя
+// неизвестно заранее (и меняется), поэтому фиксированного массива цветов нет:
+// оттенок равномерно распределяется по цветовому кругу через индекс категории.
 //
-// Палитра смягчена: фон карточек полупрозрачный пастельный, цвет секторов
-// диаграммы — более насыщенный для контраста на белом/светлом фоне.
+// Секторы диаграммы рисуются в насыщенных тонах (S 80% / L 60%): при 10-20 категориях
+// каждый сектор получает свой уникальный сочный оттенок, а не блёклую заливку.
+// Затенение при выборе категории — тот же оттенок с alpha 0.25: сектор тускнеет,
+// но сохраняет свой цвет, а пропорции кольца не меняются.
 
 export type CategoryColor = {
-  /** Полупрозрачный пастельный цвет базового сектора диаграммы (15–25% альфа) */
-  bg: string;
-  /** Лёгкая рамка для чёткости контура карточки */
-  border: string;
-  /** Плотный цвет сектора Donut Chart (без прозрачности) */
+  /** Плотный сочный цвет сектора диаграммы (без прозрачности) */
   chart: string;
+  /** Тот же оттенок с alpha 0.25 — затенённый сектор при выборе другой категории */
+  dimmed: string;
+  /** Лёгкая рамка для чёткости контура плитки категории */
+  border: string;
 };
 
-const BG_SATURATION = 55;
-const BG_LIGHTNESS = 45;
-const BG_ALPHA = 0.20;
+/** Насыщенность и светлота ярких секторов: сочно, но читаемо на светлом фоне */
+export const CHART_SATURATION = 80;
+export const CHART_LIGHTNESS = 60;
 
-const BORDER_SATURATION = 60;
-const BORDER_LIGHTNESS = 50;
-const BORDER_ALPHA = 0.35;
+/** Прозрачность затенённых секторов при выборе категории */
+export const DIMMED_OPACITY = 0.25;
 
-const CHART_SATURATION = 65;
-const CHART_LIGHTNESS = 55;
-
-/** Шаг золотого сечения: hue соседних категорий разводится на 137.5°, чтобы секторы не сливались. */
-export const GOLDEN_RATIO_STEP = 137.5;
+const BORDER_SATURATION = 70;
+const BORDER_LIGHTNESS = 55;
+const BORDER_ALPHA = 0.45;
 
 const normalizeHue = (hue: number): number => ((hue % 360) + 360) % 360;
 
 /**
- * Возвращает палитру категории: фон, рамка и цвет сектора диаграммы.
+ * Яркий цвет категории по её позиции в списке категорий.
  *
- * @param categoryName  имя категории — из него детерминированно считается hue
- * @param hueOverride   явный hue (например, золотое сечение для секторов диаграммы);
- *                      если не задан, hue считается из имени категории
+ * Оттенок распределяется равномерно: шаг = 360 / N, где N — количество категорий.
+ * Поэтому при любом N (5, 10, 15, 20) соседние категории получают разные оттенки,
+ * а один и тот же индекс всегда даёт один и тот же цвет — категория не «перекрашивается»
+ * при пересчёте статистики или смене месяца.
+ *
+ * @param index порядковый номер категории (0 ... total-1)
+ * @param total количество категорий, по которому раскладывается круг
  */
-export const getCategoryColor = (categoryName: string, hueOverride?: number): CategoryColor => {
-  let hue: number;
-  if (hueOverride !== undefined) {
-    hue = normalizeHue(hueOverride);
-  } else {
-    // Строковый хэш (djb2-подобный) → hue 0..359
-    let hash = 0;
-    for (let i = 0; i < categoryName.length; i++) {
-      hash = categoryName.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    hue = normalizeHue(Math.abs(hash));
-  }
+export const getCategoryColor = (index: number, total: number): CategoryColor => {
+  const hue = normalizeHue(Math.round((index * (360 / Math.max(total, 1))) % 360));
   return {
-    bg: `hsla(${hue}, ${BG_SATURATION}%, ${BG_LIGHTNESS}%, ${BG_ALPHA})`,
-    border: `hsla(${hue}, ${BORDER_SATURATION}%, ${BORDER_LIGHTNESS}%, ${BORDER_ALPHA})`,
     chart: `hsl(${hue}, ${CHART_SATURATION}%, ${CHART_LIGHTNESS}%)`,
+    dimmed: `hsl(${hue}, ${CHART_SATURATION}%, ${CHART_LIGHTNESS}%, ${DIMMED_OPACITY})`,
+    border: `hsla(${hue}, ${BORDER_SATURATION}%, ${BORDER_LIGHTNESS}%, ${BORDER_ALPHA})`,
   };
 };
