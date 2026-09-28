@@ -9,6 +9,7 @@ import { db } from "./firebase";
 import { getCategoryColor } from "./categoryColors";
 import {
   ICON_LABELS,
+  ICON_GROUP_LABELS,
   MONTHS,
   intlLocale,
   loadLang,
@@ -328,6 +329,17 @@ const ICON_MAP: Record<string, keyof typeof LucideIcons> = {
   leaf: "Leaf",
   paint: "Palette",
   pizza: "Pizza",
+  // Расширенный набор (группируется в пикере, см. ICON_GROUPS).
+  // Taxi в lucide-react 1.27 переименован в CarTaxiFront — старого имени нет
+  fruit: "Apple",
+  taxi: "CarTaxiFront",
+  zap: "Zap",
+  water: "Droplet",
+  wifi: "Wifi",
+  trophy: "Trophy",
+  pill: "Pill",
+  package: "Package",
+  hotel: "Hotel",
   receipt: "Receipt",
   scissors: "Scissors",
   tools: "Hammer",
@@ -339,8 +351,62 @@ const ICON_MAP: Record<string, keyof typeof LucideIcons> = {
   loyalty: "ScanBarcode",
 };
 
-const CATEGORY_ICONS = Object.keys(ICON_MAP).filter((key) => !["grid", "card", "chart", "goal", "plus", "arrow", "loyalty"].includes(key));
-// Подписи иконок локализованы в ./i18n (ICON_LABELS: { ru, en, sr })
+// Иконки выбора категории разложены по смысловым группам: список на 50+ позиций
+// без заголовков искать невозможно. Каждая иконка категории входит ровно в одну
+// группу (проверяется тестом), служебные иконки интерфейса (grid, card, chart,
+// goal, plus, arrow, loyalty) в выбор не попадают.
+// Иконки выбора категории разложены по смысловым группам: список на 50+ позиций
+// без заголовков искать невозможно. Каждая иконка категории входит ровно в одну
+// группу (проверяется тестом), служебные иконки интерфейса (grid, card, chart,
+// goal, plus, arrow, loyalty) в выбор не попадают.
+const ICON_GROUPS: { id: string; icons: string[] }[] = [
+  { id: "food", icons: ["food", "coffee", "pizza", "fruit", "beer", "wine", "icecream"] },
+  { id: "transport", icons: ["transport", "bus", "taxi", "gas", "train", "bike", "wrench"] },
+  { id: "home", icons: ["home", "zap", "water", "wifi", "tv", "receipt", "lamp", "tools"] },
+  { id: "fun", icons: ["ent", "movie", "game", "music", "sport", "trophy", "camera", "paint", "clapper"] },
+  { id: "health", icons: ["health", "pill", "glasses", "beauty"] },
+  { id: "shopping", icons: ["shopping", "clothing", "gift", "card", "phone", "package"] },
+  { id: "travel", icons: ["travel", "hotel", "umbrella", "baby", "pet"] },
+  { id: "other", icons: ["other", "wallet", "bank", "coins", "book", "education", "scissors", "leaf", "cloud"] },
+];
+
+// Пикер иконки категории: группы с заголовками. Один компонент на обе формы
+// (создание и редактирование) — раньше разметка дублировалась, и списки могли разойтись
+function IconPicker({
+  value,
+  onChange,
+  iconLabel,
+  groupLabel,
+}: {
+  value: string;
+  onChange: (icon: string) => void;
+  iconLabel: (icon: string) => string;
+  groupLabel: (id: string) => string;
+}) {
+  return (
+    <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
+      {ICON_GROUPS.map((group) => (
+        <section className="icon-group" key={group.id}>
+          <b className="icon-group-title">{groupLabel(group.id)}</b>
+          <div className="icon-group-grid">
+            {group.icons.map((icon) => (
+              <button
+                type="button"
+                key={icon}
+                title={iconLabel(icon)}
+                aria-label={iconLabel(icon)}
+                className={`icon-dropdown-option${value === icon ? " selected" : ""}`}
+                onClick={() => onChange(icon)}
+              >
+                <Icon name={icon} />
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
 
 function Icon({ name }: { name: string }) {
   const iconName = ICON_MAP[name] || ICON_MAP.other;
@@ -551,6 +617,8 @@ function App() {
   const t = useMemo(() => makeT(lang), [lang]);
   const formatMoney = (value: number) => formatMoneyWithLang(value, lang);
   const iconLabel = (icon: string) => ICON_LABELS[lang][icon] ?? ICON_LABELS.ru[icon] ?? "•";
+  // Заголовок группы иконок в пикере (lang из состояния — тот же, что у подписей)
+  const iconGroupLabel = (id: string) => ICON_GROUP_LABELS[lang][id] ?? ICON_GROUP_LABELS.ru[id] ?? id;
 
   // Если язык Telegram изменится в открытом Mini App, интерфейс обновится сам.
   useEffect(() => {
@@ -2124,20 +2192,15 @@ useEffect(() => {
                       <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                     </button>
                     {iconPickerOpen && (
-                      <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
-                        {CATEGORY_ICONS.map((icon) => {
-                          return (
-                            <button
-                              type="button"
-                              key={icon}
-                              className={`icon-dropdown-option${categoryIconValue === icon ? " selected" : ""}`}
-                              onClick={() => { setCategoryIconValue(icon); setIconPickerOpen(false); }}
-                            >
-                              <Icon name={icon} />
-                            </button>
-                          );
-                        })}
-                      </div>
+                      <IconPicker
+                        value={categoryIconValue}
+                        iconLabel={iconLabel}
+                        groupLabel={iconGroupLabel}
+                        onChange={(icon) => {
+                          setCategoryIconValue(icon);
+                          setIconPickerOpen(false);
+                        }}
+                      />
                     )}
                   </div>
                 </div>
@@ -2162,20 +2225,15 @@ useEffect(() => {
                       <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                     </button>
                     {iconPickerOpen && (
-                      <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
-                        {CATEGORY_ICONS.map((icon) => {
-                          return (
-                            <button
-                              type="button"
-                              key={icon}
-                              className={`icon-dropdown-option${categoryIconValue === icon ? " selected" : ""}`}
-                              onClick={() => { setCategoryIconValue(icon); setIconPickerOpen(false); }}
-                            >
-                              <Icon name={icon} />
-                            </button>
-                          );
-                        })}
-                      </div>
+                      <IconPicker
+                        value={categoryIconValue}
+                        iconLabel={iconLabel}
+                        groupLabel={iconGroupLabel}
+                        onChange={(icon) => {
+                          setCategoryIconValue(icon);
+                          setIconPickerOpen(false);
+                        }}
+                      />
                     )}
                   </div>
                 </div>
@@ -2320,18 +2378,15 @@ useEffect(() => {
                       <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                     </button>
                     {iconPickerOpen && (
-                      <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
-                        {CATEGORY_ICONS.map((icon) => (
-                          <button
-                            type="button"
-                            key={icon}
-                            className={`icon-dropdown-option${goalIconValue === icon ? " selected" : ""}`}
-                            onClick={() => { setGoalIconValue(icon); setIconPickerOpen(false); }}
-                          >
-                            <Icon name={icon} />
-                          </button>
-                        ))}
-                      </div>
+                      <IconPicker
+                        value={goalIconValue}
+                        iconLabel={iconLabel}
+                        groupLabel={iconGroupLabel}
+                        onChange={(icon) => {
+                          setGoalIconValue(icon);
+                          setIconPickerOpen(false);
+                        }}
+                      />
                     )}
                   </div>
                 </div>
@@ -2355,18 +2410,15 @@ useEffect(() => {
                       <span className="icon-dropdown-arrow"><Icon name="arrow" /></span>
                     </button>
                     {iconPickerOpen && (
-                      <div className="icon-dropdown-panel" onClick={(e) => e.stopPropagation()}>
-                        {CATEGORY_ICONS.map((icon) => (
-                          <button
-                            type="button"
-                            key={icon}
-                            className={`icon-dropdown-option${goalIconValue === icon ? " selected" : ""}`}
-                            onClick={() => { setGoalIconValue(icon); setIconPickerOpen(false); }}
-                          >
-                            <Icon name={icon} />
-                          </button>
-                        ))}
-                      </div>
+                      <IconPicker
+                        value={goalIconValue}
+                        iconLabel={iconLabel}
+                        groupLabel={iconGroupLabel}
+                        onChange={(icon) => {
+                          setGoalIconValue(icon);
+                          setIconPickerOpen(false);
+                        }}
+                      />
                     )}
                   </div>
                 </div>

@@ -378,9 +378,9 @@ input:focus, select:focus { border-color: var(--accent-color); }
   left: 0;
   right: 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  max-height: 220px;
+  /* Панель — вертикальный список групп; сетка 4×N живёт внутри каждой группы */
+  gap: 14px;
+  max-height: 260px;
   padding: 12px;
   border: 1px solid var(--border-color);
   border-radius: 16px;
@@ -389,6 +389,23 @@ input:focus, select:focus { border-color: var(--accent-color); }
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+/* Группа иконок: заголовок + сетка 4×N. Заголовок липнет к верху при прокрутке,
+   чтобы при длинном списке было видно, в какой группе находится курсор */
+.icon-group { display: grid; gap: 6px; }
+.icon-group-title {
+  position: sticky;
+  top: -12px;
+  z-index: 2;
+  padding: 4px 0;
+  background: var(--secondary-bg-color);
+  color: var(--hint-color);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.icon-group-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 
 .icon-dropdown {
   position: relative;

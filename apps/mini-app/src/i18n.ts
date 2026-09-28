@@ -433,6 +433,25 @@ export const MONTHS: Record<Lang, string[]> = {
 };
 
 /** Подписи иконок категорий/целей в пикере иконок. */
+// Заголовки групп в выпадающем пикере иконок (порядок задан ICON_GROUPS)
+export const ICON_GROUP_LABELS: Record<Lang, Record<string, string>> = {
+  ru: {
+    food: "Еда и напитки", transport: "Транспорт", home: "Дом и счета",
+    fun: "Развлечения и спорт", health: "Здоровье", shopping: "Покупки",
+    travel: "Путешествия и питомцы", other: "Другое",
+  },
+  en: {
+    food: "Food & drinks", transport: "Transport", home: "Home & bills",
+    fun: "Fun & sport", health: "Health", shopping: "Shopping",
+    travel: "Travel & pets", other: "Other",
+  },
+  sr: {
+    food: "Hrana i pića", transport: "Prevoz", home: "Dom i računi",
+    fun: "Zabava i sport", health: "Zdravlje", shopping: "Kupovina",
+    travel: "Putovanja i kućni ljubimci", other: "Ostalo",
+  },
+};
+
 export const ICON_LABELS: Record<Lang, Record<string, string>> = {
   ru: {
     food: "Еда", transport: "Транспорт", shopping: "Покупки", ent: "Развлечения",
@@ -440,11 +459,14 @@ export const ICON_LABELS: Record<Lang, Record<string, string>> = {
     coffee: "Кофе", book: "Книга", movie: "Кино", music: "Музыка",
     phone: "Телефон", travel: "Путешествие", sport: "Спорт", education: "Образование",
     pet: "Питомец", beauty: "Красота", clothing: "Одежда", other: "Другое",
-    baby: "Дети", bank: "Банк", beer: "Алкоголь", bike: "Велосипед",
+    baby: "Дети", bank: "Банк", card: "Карта", beer: "Алкоголь", bike: "Велосипед",
     bus: "Автобус", camera: "Фото", clapper: "Видео", cloud: "Облако",
     coins: "Монеты", game: "Игры", gas: "Бензин", glasses: "Зрение",
     icecream: "Десерты", lamp: "Свет", leaf: "Природа", paint: "Творчество",
-    pizza: "Пицца", receipt: "Чеки", scissors: "Услуги", tools: "Инструменты",
+    pizza: "Пицца", fruit: "Фрукты", taxi: "Такси", zap: "Электричество",
+    water: "Вода", wifi: "Интернет", trophy: "Награды", pill: "Лекарства",
+    package: "Товары", hotel: "Отель",
+    receipt: "Чеки", scissors: "Услуги", tools: "Инструменты",
     train: "Поезд", tv: "ТВ", umbrella: "Зонт", wine: "Вино",
     wrench: "Ремонт", goal: "Цель",
   },
@@ -454,11 +476,14 @@ export const ICON_LABELS: Record<Lang, Record<string, string>> = {
     coffee: "Coffee", book: "Books", movie: "Movies", music: "Music",
     phone: "Phone", travel: "Travel", sport: "Sport", education: "Education",
     pet: "Pets", beauty: "Beauty", clothing: "Clothes", other: "Other",
-    baby: "Kids", bank: "Bank", beer: "Alcohol", bike: "Bike",
+    baby: "Kids", bank: "Bank", card: "Card", beer: "Alcohol", bike: "Bike",
     bus: "Bus", camera: "Photo", clapper: "Video", cloud: "Cloud",
     coins: "Coins", game: "Games", gas: "Fuel", glasses: "Vision",
     icecream: "Desserts", lamp: "Light", leaf: "Nature", paint: "Art",
-    pizza: "Pizza", receipt: "Receipts", scissors: "Services", tools: "Tools",
+    pizza: "Pizza", fruit: "Fruit", taxi: "Taxi", zap: "Electricity",
+    water: "Water", wifi: "Internet", trophy: "Awards", pill: "Medicine",
+    package: "Goods", hotel: "Hotel",
+    receipt: "Receipts", scissors: "Services", tools: "Tools",
     train: "Train", tv: "TV", umbrella: "Umbrella", wine: "Wine",
     wrench: "Repair", goal: "Goal",
   },
@@ -468,11 +493,14 @@ export const ICON_LABELS: Record<Lang, Record<string, string>> = {
     coffee: "Kafa", book: "Knjiga", movie: "Film", music: "Muzika",
     phone: "Telefon", travel: "Putovanje", sport: "Sport", education: "Obrazovanje",
     pet: "Kućni ljubimci", beauty: "Lepota", clothing: "Odeća", other: "Ostalo",
-    baby: "Deca", bank: "Banka", beer: "Alkohol", bike: "Bicikl",
+    baby: "Deca", bank: "Banka", card: "Kartica", beer: "Alkohol", bike: "Bicikl",
     bus: "Autobus", camera: "Fotografija", clapper: "Video", cloud: "Oblak",
     coins: "Novčići", game: "Igrice", gas: "Gorivo", glasses: "Vid",
     icecream: "Slatkiši", lamp: "Svetlo", leaf: "Priroda", paint: "Umetnost",
-    pizza: "Pizza", receipt: "Računi", scissors: "Usluge", tools: "Alati",
+    pizza: "Pizza", fruit: "Voće", taxi: "Taksi", zap: "Struja",
+    water: "Voda", wifi: "Internet", trophy: "Nagrade", pill: "Lekovi",
+    package: "Roba", hotel: "Hotel",
+    receipt: "Računi", scissors: "Usluge", tools: "Alati",
     train: "Voz", tv: "TV", umbrella: "Kišobran", wine: "Vino",
     wrench: "Popravke", goal: "Cilj",
   },
