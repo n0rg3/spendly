@@ -23,6 +23,8 @@ import { cardDropIndex, cardDropLineY, type CardDragRect } from "./cardDrag";
 import { matchCategory } from "./categoryMatch";
 // Даты чека: время с принта («стена часов»), без сдвига на часовой пояс -> ./receiptDate
 import { receiptDateToIso, formatReceiptDateTime, localMonthKey } from "./receiptDate";
+// Название позиции чека с суффиксом количества « xN» -> ./receiptItemName
+import { formatReceiptItemName } from "./receiptItemName";
 import "./styles.css";
 
 function lockAppHeight() {
@@ -1455,10 +1457,15 @@ useEffect(() => {
       throw new Error(payload?.error || `Ошибка API: HTTP ${response.status}`);
     }
 
-    // Позиции + их категории + итог + дата — один объект результата
+    // Позиции + их категории + итог + дата — один объект результата.
+    // Название позиции показываем с суффиксом количества « xN» (qty > 1): суффикс дописывает UI,
+    // независимо от того, добавил ли его сервер — идемпотентно, поэтому «Pivo x2 x2» не будет.
     const receipt: ParsedReceiptPayload = {
       dateTime: payload.dateTime ?? null,
-      items: payload.items,
+      items: payload.items.map((item) => ({
+        ...item,
+        name: formatReceiptItemName(item.name, item.qty),
+      })),
       total: payload.total ?? payload.items.reduce((sum, item) => sum + item.total, 0),
     };
 
