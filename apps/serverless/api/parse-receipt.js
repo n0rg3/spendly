@@ -219,8 +219,8 @@ function buildSystemInstruction(categoriesList) {
     "4. Очищай название товара (name) от технологических пометок чека: убирай фискальные суффиксы «KOM (Ђ)», «KOM (E)», «KOM», служебные коды и прочий мусор. Размер упаковки оставляй в компактном латинском виде.",
     '   Пример: "SOK COCA COLA ZERO 1,5L KOM (Ђ)" -> "Sok Coca Cola Zero 1.5L".',
     "5. Форматируй итоговое название (name) по количеству — на фронтенде дополнительной склейки нет:",
-    "   — если qty > 1, добавь к очищенному названию суффикс количества строго в формате «{Название} {qty} kom». Пример: товар «Voda» в количестве 3 -> name = \"Voda 3 kom\".",
-    "   — если qty == 1, оставь только оригинальное название без суффикса. Пример: name = \"Hleb\" (НЕ \"Hleb 1 kom\").",
+    "   — если qty > 1, добавь к очищенному названию суффикс количества строго в формате «{Название} x{qty}». Пример: товар «Voda» в количестве 3 -> name = \"Voda x3\".",
+    "   — если qty == 1, оставь только оригинальное название без суффикса. Пример: name = \"Hleb\".",
     "6. dateTime — дата и время покупки ТОЧНО так, как они напечатаны на чеке: формат YYYY-MM-DDTHH:mm:ss, локальное время чека. НЕ добавляй суффикс Z и НЕ указывай часовой пояс/смещение: 17:50 на чеке должно остаться 17:50, иначе приложение посчитает это UTC и прибавит локальный пояс.",
     '7. total — итоговая сумма чека (строка "Укупан износ"), а если её нет — сумма total всех позиций.',
     "Не добавляй пояснений, markdown и лишних полей — только JSON по схеме.",
@@ -251,7 +251,7 @@ function buildResponseSchema(categoriesList) {
             name: {
               type: "string",
               description:
-                "Готовое к показу название товара (склейка на клиенте не нужна): без фискальных суффиксов «KOM (Ђ)», «KOM (E)», «KOM» и служебных кодов; если qty > 1 — с суффиксом количества в формате «{Название} {qty} kom» (например, «Voda 3 kom»), если qty == 1 — только название (например, «Hleb»)",
+                "Готовое к показу название товара (склейка на клиенте не нужна): без фискальных суффиксов «KOM (Ђ)», «KOM (E)», «KOM» и служебных кодов; если qty > 1 — с суффиксом количества в формате «{Название} x{qty}» (например, «Voda x3»), если qty == 1 — только название (например, «Hleb»)",
             },
             qty: { type: "number", description: "Количество" },
             price: { type: "number", description: "Цена за единицу" },
@@ -292,6 +292,20 @@ export function extractReceiptText(html) {
     .slice(0, MAX_RECEIPT_TEXT_LENGTH);
 }
 
+// Количество дописывается к названию ЗДЕСЬ, детерминированно (не полагаемся на модель):
+//   qty > 1  -> «{Название} x{qty}»     (например, «Voda x3»)
+//   qty == 1 -> только название          (например, «Hleb»)
+// Функция идемпотентна: уже добавленный суффикс («... x3» или старый «... 3 kom») сначала
+// снимается, затем добавляется один раз — поэтому дубля вида «Voda x3 x3» не будет, даже если
+// модель тоже вернула название с количеством.
+function formatItemName(rawName, qty) {
+  const base = String(rawName ?? "")
+    .replace(/\s+(?:x\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*kom)\s*$/i, "")
+    .trim();
+  if (!base) return "";
+  return qty > 1 ? `${base} x${qty}` : base;
+}
+
 // Ответ модели -> формат API: числа числами, категория только из списка пользователя.
 // Сравнение названий — нормализованное: модель может вернуть «Продукты», «продукты »
 // или с неразрывным пробелом, и это не должно терять категорию.
@@ -304,11 +318,12 @@ function normalizeReceipt(payload, categoriesList) {
       const total = Number(item?.total);
       const price = Number(item?.price);
       const qty = Number(item?.qty);
+      const safeQty = Number.isFinite(qty) && qty > 0 ? qty : 1;
       // В ответе отдаём написание пользователя, а не модели
       const category = typeof item?.category === "string" ? allowed.get(normalizeCategoryName(item.category)) : undefined;
       return {
-        name: String(item?.name ?? "").trim(),
-        qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
+        name: formatItemName(item?.name, safeQty),
+        qty: safeQty,
         price: Number.isFinite(price) ? price : Number.isFinite(total) ? total : 0,
         total: Number.isFinite(total) ? total : 0,
         category: category ?? null,

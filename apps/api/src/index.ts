@@ -551,7 +551,7 @@ const RECEIPT_SYSTEM_INSTRUCTION = [
   "Правила:",
   "1. items — все купленные позиции в исходном порядке. Служебные строки (итог, налог, сдача, заголовки, данные продавца и кассира) позициями не считаются.",
   '2. price — цена за единицу, qty — количество, total — сумма по позиции. Сербский формат чисел ("134,99", "1.234,56") переводи в обычные числа.',
-  "3. Форматируй итоговое название (name) по количеству — на фронтенде дополнительной склейки нет: если qty > 1, добавь суффикс строго в формате «{Название} {qty} kom» (пример: «Voda» при qty=3 -> \"Voda 3 kom\"); если qty == 1, оставь только название без суффикса (пример: \"Hleb\", а НЕ \"Hleb 1 kom\").",
+  "3. Форматируй итоговое название (name) по количеству — на фронтенде дополнительной склейки нет: если qty > 1, добавь суффикс строго в формате «{Название} x{qty}» (пример: «Voda» при qty=3 -> \"Voda x3\"); если qty == 1, оставь только название без суффикса (пример: \"Hleb\").",
   "4. category — ровно одно название из списка допустимых категорий; если ничего не подходит — null.",
   "5. dateTime — дата и время покупки из чека в формате ISO 8601 (YYYY-MM-DDTHH:mm:ss).",
   '6. total — итоговая сумма чека (строка "Укупан износ"), а если её нет — сумма total всех позиций.',
@@ -574,7 +574,7 @@ function buildReceiptResponseSchema(categoriesList: string[]) {
             name: {
               type: "string",
               description:
-                "Готовое к показу название товара (склейка на клиенте не нужна). Если qty > 1 — с суффиксом количества «{Название} {qty} kom» (например, «Voda 3 kom»); если qty == 1 — только название (например, «Hleb»)",
+                "Готовое к показу название товара (склейка на клиенте не нужна). Если qty > 1 — с суффиксом количества «{Название} x{qty}» (например, «Voda x3»); если qty == 1 — только название (например, «Hleb»)",
             },
             qty: { type: "number", description: "Количество" },
             price: { type: "number", description: "Цена за единицу" },
@@ -616,6 +616,19 @@ type GeminiReceiptPayload = {
   items?: { name?: unknown; qty?: unknown; price?: unknown; total?: unknown; category?: unknown }[];
 };
 
+// Количество дописывается к названию ЗДЕСЬ, детерминированно (не полагаемся на модель):
+//   qty > 1  -> «{Название} x{qty}»     (например, «Voda x3»)
+//   qty == 1 -> только название          (например, «Hleb»)
+// Функция идемпотентна: уже добавленный суффикс («... x3» или старый «... 3 kom») сначала
+// снимается, затем добавляется один раз — дубля вида «Voda x3 x3» не будет.
+function formatItemName(rawName: unknown, qty: number): string {
+  const base = String(rawName ?? "")
+    .replace(/\s+(?:x\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*kom)\s*$/i, "")
+    .trim();
+  if (!base) return "";
+  return qty > 1 ? `${base} x${qty}` : base;
+}
+
 // Ответ модели -> формат API: числа числами, категория только из списка пользователя
 function normalizeReceipt(payload: GeminiReceiptPayload, categoriesList: string[]): ParsedReceipt {
   const allowed = new Set(categoriesList);
@@ -626,9 +639,10 @@ function normalizeReceipt(payload: GeminiReceiptPayload, categoriesList: string[
       const total = Number(item?.total);
       const price = Number(item?.price);
       const qty = Number(item?.qty);
+      const safeQty = Number.isFinite(qty) && qty > 0 ? qty : 1;
       return {
-        name: String(item?.name ?? "").trim(),
-        qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
+        name: formatItemName(item?.name, safeQty),
+        qty: safeQty,
         price: Number.isFinite(price) ? price : Number.isFinite(total) ? total : 0,
         total: Number.isFinite(total) ? total : 0,
         category:

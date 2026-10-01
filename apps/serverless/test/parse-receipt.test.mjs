@@ -285,8 +285,8 @@ test("системная инструкция жёстко фиксирует с
 
   // Правило форматирования названия по количеству: суффикс добавляет МОДЕЛЬ, склейки на клиенте нет
   assert.match(instruction, /qty > 1/);
-  assert.match(instruction, /\{Название\} \{qty\} kom/);
-  assert.match(instruction, /Voda 3 kom/);
+  assert.match(instruction, /\{Название\} x\{qty\}/);
+  assert.match(instruction, /Voda x3/);
   assert.match(instruction, /Hleb/);
 
   // Описание поля name в схеме тоже требует чистого названия
@@ -298,11 +298,45 @@ test("системная инструкция жёстко фиксирует с
   // И правила форматирования по количеству — тоже в описании схемы
   assert.match(
     geminiRequest.generationConfig.responseSchema.properties.items.items.properties.name.description,
-    /\{Название\} \{qty\} kom/,
+    /\{Название\} x\{qty\}/,
   );
 
   // И список категорий продублирован в промпте
   assert.match(geminiRequest.contents[0].parts[0].text, /"Еда"/);
+});
+
+test("к названию позиции дописывается количество при qty > 1 и не дописывается при qty == 1", async () => {
+  resetAi();
+  geminiReply = {
+    ...AI_RECEIPT,
+    items: [
+      { name: "Voda", qty: 3, price: 57.99, total: 173.97, category: "Продукты" },
+      { name: "Hleb", qty: 1, price: 60, total: 60, category: "Продукты" },
+      { name: "Mleko", qty: 2, price: 89.99, total: 179.98, category: "Продукты" },
+    ],
+  };
+  const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Продукты"] } });
+
+  assert.equal(status, 200);
+  // Количество дописывает функция, а не фронтенд: «{Название} x{qty}» при qty > 1
+  assert.deepEqual(body.items.map((i) => i.name), ["Voda x3", "Hleb", "Mleko x2"]);
+  assert.deepEqual(body.items.map((i) => i.qty), [3, 1, 2]);
+});
+
+test("суффикс количества не дублируется, если модель уже добавила его в name", async () => {
+  resetAi();
+  geminiReply = {
+    ...AI_RECEIPT,
+    items: [
+      { name: "Voda x3", qty: 3, price: 57.99, total: 173.97, category: "Продукты" },
+      // Старый формат модели «N kom» тоже снимается, а не копится
+      { name: "Hleb 1 kom", qty: 1, price: 60, total: 60, category: "Продукты" },
+    ],
+  };
+  const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Продукты"] } });
+
+  assert.equal(status, 200);
+  assert.deepEqual(body.items.map((i) => i.name), ["Voda x3", "Hleb"]);
 });
 
 test("ошибка Gemini отдаётся как 502, без выдуманных позиций", async () => {
