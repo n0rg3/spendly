@@ -283,10 +283,22 @@ test("системная инструкция жёстко фиксирует с
   assert.match(instruction, /SOK COCA COLA ZERO 1,5L KOM \(Ђ\)/);
   assert.match(instruction, /Sok Coca Cola Zero 1\.5L/);
 
+  // Правило форматирования названия по количеству: суффикс добавляет МОДЕЛЬ, склейки на клиенте нет
+  assert.match(instruction, /qty > 1/);
+  assert.match(instruction, /\{Название\} \{qty\} kom/);
+  assert.match(instruction, /Voda 3 kom/);
+  assert.match(instruction, /Hleb/);
+
   // Описание поля name в схеме тоже требует чистого названия
   assert.match(
     geminiRequest.generationConfig.responseSchema.properties.items.items.properties.name.description,
     /KOM/,
+  );
+
+  // И правила форматирования по количеству — тоже в описании схемы
+  assert.match(
+    geminiRequest.generationConfig.responseSchema.properties.items.items.properties.name.description,
+    /\{Название\} \{qty\} kom/,
   );
 
   // И список категорий продублирован в промпте
