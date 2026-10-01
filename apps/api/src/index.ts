@@ -550,10 +550,10 @@ const RECEIPT_SYSTEM_INSTRUCTION = [
   "На вход приходит сырой текст чека — верни строго JSON по заданной схеме.",
   "Правила:",
   "1. items — все купленные позиции в исходном порядке. Служебные строки (итог, налог, сдача, заголовки, данные продавца и кассира) позициями не считаются.",
-  '2. price — цена за единицу, qty — количество, total — сумма по позиции. Сербский формат чисел ("134,99", "1.234,56") переводи в обычные числа.',
-  "3. name — очищенное человекочитаемое название товара: убирай фискальные пометки «KOM (Ђ)», «KOM (E)», «KOM», штрихкоды и артикулы, служебные символы и техмусор («*», «#», «art.12345»). Регистр — обычный (Title Case / Sentence case), БЕЗ СУПЕР-КАПСА: \"VODA ROSA 1.5L\" -> \"Voda Rosa 1.5L\".",
-  "4. Количество пишется прямо в name: если qty > 1, итоговое name = «{Название} x{qty}» (пример: «Voda» при qty=3 -> \"Voda x3\"); если qty == 1, суффикс НЕ добавляй (никакого «x1», пример: \"Hleb\").",
-  "5. Примеры преобразования name: \"123456 COCA COLA 0.5L (3 шт)\" -> \"Coca Cola 0.5L x3\"; \"* HLEB SAVA 500G 1.000\" -> \"Hleb Sava 500g\"; \"JOGURT MOJA KRAVICA 2.8% (5)\" -> \"Jogurt Moja Kravica 2.8% x5\".",
+  '2. price — цена за единицу, quantity — количество, total — сумма по позиции. Сербский формат чисел ("134,99", "1.234,56") переводи в обычные числа.',
+  "3. name — очищенное человекочитаемое название товара БЕЗ количества: убирай фискальные пометки «KOM (Ђ)», «KOM (E)», «KOM», штрихкоды и артикулы, служебные символы и техмусор («*», «#», «art.12345»). Регистр — обычный (Title Case / Sentence case), БЕЗ СУПЕР-КАПСА: \"VODA ROSA 1.5L\" -> \"Voda Rosa 1.5L\".",
+  "4. quantity — верни точное числовое значение количества ОТДЕЛЬНЫМ полем quantity (number) ровно как на чеке (например, «3», «5», «1»). НЕ дописывай количество в name и НЕ добавляй суффиксы вида «x3» — их добавляет приложение.",
+  "5. Примеры (в name количества НЕТ — оно в отдельном поле quantity): \"123456 COCA COLA 0.5L (3 шт)\" -> name \"Coca Cola 0.5L\", quantity 3; \"* HLEB SAVA 500G 1.000\" -> name \"Hleb Sava 500g\", quantity 1; \"JOGURT MOJA KRAVICA 2.8% (5)\" -> name \"Jogurt Moja Kravica 2.8%\", quantity 5.",
   "6. category — ровно одно название из списка допустимых категорий; если ничего не подходит — null.",
   "7. dateTime — дата и время покупки из чека в формате ISO 8601 (YYYY-MM-DDTHH:mm:ss).",
   '8. total — итоговая сумма чека (строка "Укупан износ"), а если её нет — сумма total всех позиций.',
@@ -576,14 +576,14 @@ function buildReceiptResponseSchema(categoriesList: string[]) {
             name: {
               type: "string",
               description:
-                "Готовое к показу название товара: очищено от штрихкодов, артикулов, служебных символов, фискальных пометок («KOM (Ђ)», «KOM (E)», «KOM») и техмусора; регистр — обычный (Title/Sentence case, без СУПЕР-КАПСА), например \"VODA ROSA 1.5L\" -> \"Voda Rosa 1.5L\". Если qty > 1 — с суффиксом количества «{Название} x{qty}» (например, «Voda x3»); если qty == 1 — без суффикса (например, «Hleb», без «x1\")",
+                "Очищенное человекочитаемое название товара БЕЗ количества: без штрихкодов, артикулов, служебных символов, фискальных пометок («KOM (Ђ)», «KOM (E)», «KOM») и техмусора; регистр — обычный (Title/Sentence case, без СУПЕР-КАПСА), например \"VODA ROSA 1.5L\" -> \"Voda Rosa 1.5L\". НЕ добавляй количество и суффиксы вида «x3» — количество идёт отдельным полем quantity",
             },
-            qty: { type: "number", description: "Количество" },
+            quantity: { type: "number", description: "Точное количество (число) как на чеке — не дублируй его в name" },
             price: { type: "number", description: "Цена за единицу" },
             total: { type: "number", description: "Сумма по позиции" },
             category: { type: "string", nullable: true, enum: categoriesList, description: "Категория из списка допустимых или null" },
           },
-          required: ["name", "qty", "price", "total", "category"],
+          required: ["name", "quantity", "price", "total", "category"],
         },
       },
     },
@@ -615,7 +615,7 @@ function extractReceiptText(html: string): string {
 type GeminiReceiptPayload = {
   dateTime?: unknown;
   total?: unknown;
-  items?: { name?: unknown; qty?: unknown; price?: unknown; total?: unknown; category?: unknown }[];
+  items?: { name?: unknown; quantity?: unknown; price?: unknown; total?: unknown; category?: unknown }[];
 };
 
 // Количество дописывается к названию ЗДЕСЬ, детерминированно (не полагаемся на модель):
@@ -640,7 +640,8 @@ function normalizeReceipt(payload: GeminiReceiptPayload, categoriesList: string[
     .map((item) => {
       const total = Number(item?.total);
       const price = Number(item?.price);
-      const qty = Number(item?.qty);
+      // Количество модель отдаёт отдельным числовым полем quantity (см. responseSchema)
+      const qty = Number(item?.quantity);
       const safeQty = Number.isFinite(qty) && qty > 0 ? qty : 1;
       return {
         name: formatItemName(item?.name, safeQty),

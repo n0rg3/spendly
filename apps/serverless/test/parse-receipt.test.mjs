@@ -18,9 +18,9 @@ const receiptHtml = readFileSync(join(fixturesDir, "receipt.html"), "utf-8");
 const AI_RECEIPT = {
   dateTime: "2026-09-16T17:50:44",
   items: [
-    { name: "BOMBONE HARIBO STAR MIX  KOM (Ђ)", qty: 1, price: 134.99, total: 134.99, category: "Продукты" },
-    { name: "VODA MINERALNA 0,5L KNJA KOM (Ђ)", qty: 1, price: 57.99, total: 57.99, category: "Продукты" },
-    { name: "KESA (Ђ)", qty: 1, price: 2, total: 2, category: "Дом" },
+    { name: "BOMBONE HARIBO STAR MIX  KOM (Ђ)", quantity: 1, price: 134.99, total: 134.99, category: "Продукты" },
+    { name: "VODA MINERALNA 0,5L KNJA KOM (Ђ)", quantity: 1, price: 57.99, total: 57.99, category: "Продукты" },
+    { name: "KESA (Ђ)", quantity: 1, price: 2, total: 2, category: "Дом" },
   ],
   total: 194.98,
 };
@@ -218,9 +218,9 @@ test("категория модели сопоставляется с катег
   geminiReply = {
     ...AI_RECEIPT,
     items: [
-      { name: "VODA", qty: 1, price: 57.99, total: 57.99, category: "  продукты " },
-      { name: "KESA", qty: 1, price: 2, total: 2, category: "ДОМ" },
-      { name: "X", qty: 1, price: 1, total: 1, category: "Чужое" },
+      { name: "VODA", quantity: 1, price: 57.99, total: 57.99, category: "  продукты " },
+      { name: "KESA", quantity: 1, price: 2, total: 2, category: "ДОМ" },
+      { name: "X", quantity: 1, price: 1, total: 1, category: "Чужое" },
     ],
   };
   const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Продукты", "Дом"] } });
@@ -278,36 +278,33 @@ test("системная инструкция жёстко фиксирует с
   assert.match(instruction, /строго из списка/);
   assert.match(instruction, /Не придумывай новые категории/);
 
-  // Правило очистки названий от фискальных пометок сербских чеков
+  // Правило очистки названий от фискальных пометок и мусора
   assert.match(instruction, /KOM \(Ђ\)/);
+  assert.match(instruction, /art\.12345/);
 
-  // Очистка от штрихкодов/артикулов/спецсимволов + регистр без СУПЕР-КАПСА
+  // Регистр без СУПЕР-КАПСА
   assert.match(instruction, /VODA ROSA 1\.5L/);
   assert.match(instruction, /Voda Rosa 1\.5L/);
   assert.match(instruction, /СУПЕР-КАПС/);
 
-  // Примеры полного преобразования name из ТЗ
-  assert.match(instruction, /Coca Cola 0\.5L x3/);
+  // Количество приходит ОТДЕЛЬНЫМ числовым полем, а НЕ дописывается в name
+  assert.match(instruction, /ОТДЕЛЬНЫМ полем quantity/);
+  assert.match(instruction, /НЕ добавляй суффиксы/);
+
+  // Примеры: name без количества, количество — отдельно
+  assert.match(instruction, /Coca Cola 0\.5L/);
   assert.match(instruction, /Hleb Sava 500g/);
-  assert.match(instruction, /Jogurt Moja Kravica 2\.8% x5/);
+  assert.match(instruction, /Jogurt Moja Kravica 2\.8%/);
 
-  // Правило форматирования названия по количеству: суффикс добавляет МОДЕЛЬ, склейки на клиенте нет
-  assert.match(instruction, /qty > 1/);
-  assert.match(instruction, /\{Название\} x\{qty\}/);
-  assert.match(instruction, /Voda x3/);
-  assert.match(instruction, /Hleb/);
-
-  // Описание поля name в схеме тоже требует чистого названия
-  assert.match(
-    geminiRequest.generationConfig.responseSchema.properties.items.items.properties.name.description,
-    /KOM/,
+  // Схема: name — очищенное название без суффикса; количество — отдельное числовое поле quantity
+  const itemProps = geminiRequest.generationConfig.responseSchema.properties.items.items;
+  assert.match(itemProps.properties.name.description, /KOM/);
+  assert.ok(
+    !itemProps.properties.name.description.includes("x{qty}"),
+    "name не должен требовать суффикс xN — его добавляет код",
   );
-
-  // И правила форматирования по количеству — тоже в описании схемы
-  assert.match(
-    geminiRequest.generationConfig.responseSchema.properties.items.items.properties.name.description,
-    /\{Название\} x\{qty\}/,
-  );
+  assert.equal(itemProps.properties.quantity.type, "number", "количество — отдельное числовое поле");
+  assert.deepEqual(itemProps.required, ["name", "quantity", "price", "total", "category"]);
 
   // И список категорий продублирован в промпте
   assert.match(geminiRequest.contents[0].parts[0].text, /"Еда"/);
@@ -318,9 +315,9 @@ test("к названию позиции дописывается количес
   geminiReply = {
     ...AI_RECEIPT,
     items: [
-      { name: "Voda", qty: 3, price: 57.99, total: 173.97, category: "Продукты" },
-      { name: "Hleb", qty: 1, price: 60, total: 60, category: "Продукты" },
-      { name: "Mleko", qty: 2, price: 89.99, total: 179.98, category: "Продукты" },
+      { name: "Voda", quantity: 3, price: 57.99, total: 173.97, category: "Продукты" },
+      { name: "Hleb", quantity: 1, price: 60, total: 60, category: "Продукты" },
+      { name: "Mleko", quantity: 2, price: 89.99, total: 179.98, category: "Продукты" },
     ],
   };
   const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Продукты"] } });
@@ -336,9 +333,9 @@ test("суффикс количества не дублируется, если 
   geminiReply = {
     ...AI_RECEIPT,
     items: [
-      { name: "Voda x3", qty: 3, price: 57.99, total: 173.97, category: "Продукты" },
+      { name: "Voda x3", quantity: 3, price: 57.99, total: 173.97, category: "Продукты" },
       // Старый формат модели «N kom» тоже снимается, а не копится
-      { name: "Hleb 1 kom", qty: 1, price: 60, total: 60, category: "Продукты" },
+      { name: "Hleb 1 kom", quantity: 1, price: 60, total: 60, category: "Продукты" },
     ],
   };
   const { status, body } = await invoke({ body: { qrUrl: QR_URL, categories: ["Продукты"] } });
