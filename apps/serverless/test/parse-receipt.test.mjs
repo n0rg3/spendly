@@ -280,8 +280,16 @@ test("системная инструкция жёстко фиксирует с
 
   // Правило очистки названий от фискальных пометок сербских чеков
   assert.match(instruction, /KOM \(Ђ\)/);
-  assert.match(instruction, /SOK COCA COLA ZERO 1,5L KOM \(Ђ\)/);
-  assert.match(instruction, /Sok Coca Cola Zero 1\.5L/);
+
+  // Очистка от штрихкодов/артикулов/спецсимволов + регистр без СУПЕР-КАПСА
+  assert.match(instruction, /VODA ROSA 1\.5L/);
+  assert.match(instruction, /Voda Rosa 1\.5L/);
+  assert.match(instruction, /СУПЕР-КАПС/);
+
+  // Примеры полного преобразования name из ТЗ
+  assert.match(instruction, /Coca Cola 0\.5L x3/);
+  assert.match(instruction, /Hleb Sava 500g/);
+  assert.match(instruction, /Jogurt Moja Kravica 2\.8% x5/);
 
   // Правило форматирования названия по количеству: суффикс добавляет МОДЕЛЬ, склейки на клиенте нет
   assert.match(instruction, /qty > 1/);
